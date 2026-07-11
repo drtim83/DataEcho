@@ -171,6 +171,11 @@ export default function LoginPage() {
             </div>
           ))}
         </div>
+        {/* Credits */}
+        <div className="mt-8 pt-4 text-center" style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
+          <p className="text-[10px] font-medium" style={{ color: 'var(--color-text-muted)' }}>Created by</p>
+          <p className="text-sm font-bold text-gradient mt-1">Dr. Timothy Tok</p>
+        </div>
       </div>
     </div>
   );

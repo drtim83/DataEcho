@@ -13,6 +13,7 @@ const navItems = [
   { href: '/analytics', label: 'Analytics & Stats', icon: '📈' },
   { href: '/metering', label: 'Metering', icon: '💰' },
   { href: '/logs', label: 'Audit Trail', icon: '📋' },
+  { href: '/guide', label: 'User Guide', icon: '📖' },
 ];
 
 export default function Sidebar() {
@@ -57,8 +58,12 @@ export default function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="px-3 py-4" style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
-        <div className="flex items-center gap-3 px-3 mb-3">
+      <div className="px-3 py-4 flex flex-col gap-2" style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
+        <div className="text-center pb-2 mb-2" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+          <p className="text-[10px] font-medium" style={{ color: 'var(--color-text-muted)' }}>Created by</p>
+          <p className="text-xs font-bold text-gradient mt-0.5">Dr. Timothy Tok</p>
+        </div>
+        <div className="flex items-center gap-3 px-3 mb-2">
           <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold"
             style={{ background: 'linear-gradient(135deg, var(--color-accent-purple), var(--color-accent-blue))' }}>
             A
