@@ -310,7 +310,7 @@ export default function AnalyticsPage() {
                 { name: 'ML Feature Backfill', syncs: 456, records: 892104, latency: 4200, rate: 97.5 },
                 { name: 'Inventory Lakehouse', syncs: 252, records: 4210556, latency: 2900, rate: 98.2 },
               ].map((p, i) => (
-                <tr key={i} className="transition-colors hover:bg-[rgba(255,255,255,0.02)]" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+                <tr key={i} className="table-row" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
                   <td className="px-4 py-3 text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>{p.name}</td>
                   <td className="px-4 py-3 text-xs" style={{ color: 'var(--color-text-secondary)' }}>{formatNumber(p.syncs)}</td>
                   <td className="px-4 py-3 text-xs font-medium" style={{ color: 'var(--color-text-primary)' }}>{formatNumber(p.records)}</td>

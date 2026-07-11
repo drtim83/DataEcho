@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 
 const navItems = [
   { href: '/', label: 'Command Center', icon: '📊' },
@@ -17,14 +17,20 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+
+  const handleLogout = () => {
+    localStorage.removeItem('dataecho_auth');
+    router.push('/login');
+  };
 
   return (
     <aside className="fixed left-0 top-0 bottom-0 w-[240px] flex flex-col z-50"
       style={{ background: 'rgba(17, 24, 39, 0.95)', backdropFilter: 'blur(20px)', borderRight: '1px solid var(--color-border-subtle)' }}>
       {/* Logo */}
       <div className="px-5 py-5 flex items-center gap-3">
-        <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg font-bold"
-          style={{ background: 'linear-gradient(135deg, var(--color-accent-blue), var(--color-accent-teal))' }}>
+        <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg font-bold animate-gradient"
+          style={{ background: 'linear-gradient(135deg, var(--color-accent-blue), var(--color-accent-teal))', backgroundSize: '200% 200%' }}>
           D
         </div>
         <div>
@@ -41,14 +47,9 @@ export default function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200"
-              style={{
-                color: isActive ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-                background: isActive ? 'rgba(59, 130, 246, 0.12)' : 'transparent',
-                borderLeft: isActive ? '3px solid var(--color-accent-blue)' : '3px solid transparent',
-              }}
+              className={`nav-item ${isActive ? 'active' : ''}`}
             >
-              <span className="text-base">{item.icon}</span>
+              <span className="text-base" style={{ filter: isActive ? 'brightness(1.2)' : 'none' }}>{item.icon}</span>
               <span>{item.label}</span>
             </Link>
           );
@@ -56,8 +57,8 @@ export default function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="px-4 py-4 border-t" style={{ borderColor: 'var(--color-border-subtle)' }}>
-        <div className="flex items-center gap-3">
+      <div className="px-3 py-4" style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
+        <div className="flex items-center gap-3 px-3 mb-3">
           <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold"
             style={{ background: 'linear-gradient(135deg, var(--color-accent-purple), var(--color-accent-blue))' }}>
             A
@@ -67,6 +68,15 @@ export default function Sidebar() {
             <p className="text-[10px] truncate" style={{ color: 'var(--color-text-muted)' }}>admin@dataecho.app</p>
           </div>
         </div>
+        <button
+          onClick={handleLogout}
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-200 cursor-pointer"
+          style={{ color: 'var(--color-text-muted)', background: 'transparent' }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)'; e.currentTarget.style.color = 'var(--color-accent-coral)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--color-text-muted)'; }}
+        >
+          <span>🚪</span> Sign Out
+        </button>
       </div>
     </aside>
   );

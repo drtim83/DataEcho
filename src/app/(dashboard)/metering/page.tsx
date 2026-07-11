@@ -134,7 +134,7 @@ export default function MeteringPage() {
             </thead>
             <tbody>
               {pipelineCosts.map(pc => (
-                <tr key={pc.pipeline.id} className="transition-colors hover:bg-[rgba(255,255,255,0.02)]" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+                <tr key={pc.pipeline.id} className="table-row" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
                   <td className="px-4 py-3 text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>{pc.pipeline.name}</td>
                   <td className="px-4 py-3">
                     <span className={`badge badge-${getDirectionColor(pc.pipeline.direction)} text-[10px]`}>{getDirectionLabel(pc.pipeline.direction)}</span>

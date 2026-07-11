@@ -128,7 +128,7 @@ export default function SchedulerPage() {
               </thead>
               <tbody>
                 {filteredJobs.map(job => (
-                  <tr key={job.id} className="transition-colors hover:bg-[rgba(255,255,255,0.02)]" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+                  <tr key={job.id} className="table-row" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
                     <td className="px-4 py-3 text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>{job.pipeline?.name || job.pipeline_id}</td>
                     <td className="px-4 py-3"><StatusBadge status={job.status} /></td>
                     <td className="px-4 py-3 text-xs" style={{ color: 'var(--color-text-secondary)' }}>{timeAgo(job.triggered_at)}</td>

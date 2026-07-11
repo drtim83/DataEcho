@@ -177,7 +177,7 @@ export default function MonitorPage() {
             </thead>
             <tbody>
               {filteredRuns.map(run => (
-                <tr key={run.id} className="transition-colors hover:bg-[rgba(255,255,255,0.02)]" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+                <tr key={run.id} className="table-row" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
                   <td className="px-4 py-3 text-sm font-medium" style={{ color: 'var(--color-text-primary)' }}>{run.pipeline?.name}</td>
                   <td className="px-4 py-3">
                     <span className={`badge badge-${getDirectionColor(run.direction)} text-[10px]`}>

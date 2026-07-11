@@ -75,7 +75,7 @@ export default function LogsPage() {
               {filtered.map(log => (
                 <tr
                   key={log.id}
-                  className="transition-colors hover:bg-[rgba(255,255,255,0.02)] cursor-pointer"
+                  className="table-row cursor-pointer"
                   style={{
                     borderBottom: '1px solid var(--color-border-subtle)',
                     background: selectedLog === log.id ? 'rgba(59, 130, 246, 0.05)' : 'transparent',

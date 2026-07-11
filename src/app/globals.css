@@ -1,92 +1,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
-@theme {
-  --color-bg-primary: #0a0e1a;
-  --color-bg-surface: #111827;
-  --color-bg-elevated: #1e293b;
-  --color-bg-hover: #253449;
-  --color-border-subtle: rgba(148, 163, 184, 0.1);
-  --color-border-default: rgba(148, 163, 184, 0.2);
-  --color-accent-blue: #3b82f6;
-  --color-accent-blue-glow: rgba(59, 130, 246, 0.3);
-  --color-accent-teal: #14b8a6;
-  --color-accent-teal-glow: rgba(20, 184, 166, 0.3);
-  --color-accent-amber: #f59e0b;
-  --color-accent-amber-glow: rgba(245, 158, 11, 0.3);
-  --color-accent-coral: #ef4444;
-  --color-accent-coral-glow: rgba(239, 68, 68, 0.3);
-  --color-accent-purple: #8b5cf6;
-  --color-accent-purple-glow: rgba(139, 92, 246, 0.3);
-  --color-text-primary: #f1f5f9;
-  --color-text-secondary: #94a3b8;
-  --color-text-muted: #64748b;
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
-}
-
-/* ============================================================
-   Base Styles
-   ============================================================ */
-
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-html, body {
-  font-family: var(--font-sans);
-  background: var(--color-bg-primary);
-  color: var(--color-text-primary);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  overflow-x: hidden;
-}
-
-/* ============================================================
-   Scrollbar
-   ============================================================ */
-
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--color-bg-elevated);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-bg-hover);
-}
-
-/* ============================================================
-   Glassmorphism Utilities
-   ============================================================ */
-
-.glass {
-  background: rgba(17, 24, 39, 0.6);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--color-border-subtle);
-}
-
-.glass-strong {
-  background: rgba(17, 24, 39, 0.8);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid var(--color-border-default);
-}
-
-.glass-card {
-  background: rgba(17, 24, 39, 0.6);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 16px;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
 }
 
 .glass-card:hover {
@@ -100,64 +17,148 @@ html, body {
    ============================================================ */
 
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes fadeInScale {
-  from { opacity: 0; transform: scale(0.95); }
-  to { opacity: 1; transform: scale(1); }
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 @keyframes slideInLeft {
-  from { opacity: 0; transform: translateX(-20px); }
-  to { opacity: 1; transform: translateX(0); }
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 @keyframes slideInRight {
-  from { opacity: 0; transform: translateX(20px); }
-  to { opacity: 1; transform: translateX(0); }
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 @keyframes pulse-glow {
-  0%, 100% { box-shadow: 0 0 0 0 var(--glow-color, rgba(59, 130, 246, 0.4)); }
-  50% { box-shadow: 0 0 12px 4px var(--glow-color, rgba(59, 130, 246, 0.2)); }
+
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--glow-color, rgba(59, 130, 246, 0.4));
+  }
+
+  50% {
+    box-shadow: 0 0 12px 4px var(--glow-color, rgba(59, 130, 246, 0.2));
+  }
 }
 
 @keyframes spin-slow {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes data-flow {
-  0% { stroke-dashoffset: 24; }
-  100% { stroke-dashoffset: 0; }
+  0% {
+    stroke-dashoffset: 24;
+  }
+
+  100% {
+    stroke-dashoffset: 0;
+  }
 }
 
 @keyframes shimmer {
-  0% { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+  0% {
+    background-position: -200% 0;
+  }
+
+  100% {
+    background-position: 200% 0;
+  }
 }
 
 @keyframes shake {
-  0%, 100% { transform: translateX(0); }
-  10%, 30%, 50%, 70%, 90% { transform: translateX(-4px); }
-  20%, 40%, 60%, 80% { transform: translateX(4px); }
+
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  10%,
+  30%,
+  50%,
+  70%,
+  90% {
+    transform: translateX(-4px);
+  }
+
+  20%,
+  40%,
+  60%,
+  80% {
+    transform: translateX(4px);
+  }
 }
 
 @keyframes progress-bar {
-  0% { width: 0%; }
+  0% {
+    width: 0%;
+  }
 }
 
 @keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-10px); }
+
+  0%,
+  100% {
+    transform: translateY(0px);
+  }
+
+  50% {
+    transform: translateY(-10px);
+  }
 }
 
 @keyframes gradient-shift {
-  0% { background-position: 0% 50%; }
-  50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
 }
 
 .animate-fade-in {
@@ -194,18 +195,42 @@ html, body {
 }
 
 /* Staggered children animation */
-.stagger-children > * {
+.stagger-children>* {
   opacity: 0;
   animation: fadeIn 0.4s ease-out forwards;
 }
-.stagger-children > *:nth-child(1) { animation-delay: 0.05s; }
-.stagger-children > *:nth-child(2) { animation-delay: 0.1s; }
-.stagger-children > *:nth-child(3) { animation-delay: 0.15s; }
-.stagger-children > *:nth-child(4) { animation-delay: 0.2s; }
-.stagger-children > *:nth-child(5) { animation-delay: 0.25s; }
-.stagger-children > *:nth-child(6) { animation-delay: 0.3s; }
-.stagger-children > *:nth-child(7) { animation-delay: 0.35s; }
-.stagger-children > *:nth-child(8) { animation-delay: 0.4s; }
+
+.stagger-children>*:nth-child(1) {
+  animation-delay: 0.05s;
+}
+
+.stagger-children>*:nth-child(2) {
+  animation-delay: 0.1s;
+}
+
+.stagger-children>*:nth-child(3) {
+  animation-delay: 0.15s;
+}
+
+.stagger-children>*:nth-child(4) {
+  animation-delay: 0.2s;
+}
+
+.stagger-children>*:nth-child(5) {
+  animation-delay: 0.25s;
+}
+
+.stagger-children>*:nth-child(6) {
+  animation-delay: 0.3s;
+}
+
+.stagger-children>*:nth-child(7) {
+  animation-delay: 0.35s;
+}
+
+.stagger-children>*:nth-child(8) {
+  animation-delay: 0.4s;
+}
 
 /* ============================================================
    Gradient Backgrounds
@@ -235,31 +260,38 @@ html, body {
   flex-shrink: 0;
 }
 
-.status-dot.connected, .status-dot.completed, .status-dot.active {
+.status-dot.connected,
+.status-dot.completed,
+.status-dot.active {
   background: var(--color-accent-teal);
   box-shadow: 0 0 8px var(--color-accent-teal-glow);
   animation: pulse-glow 2s ease-in-out infinite;
   --glow-color: var(--color-accent-teal-glow);
 }
 
-.status-dot.running, .status-dot.syncing {
+.status-dot.running,
+.status-dot.syncing {
   background: var(--color-accent-blue);
   box-shadow: 0 0 8px var(--color-accent-blue-glow);
   animation: pulse-glow 1.5s ease-in-out infinite;
   --glow-color: var(--color-accent-blue-glow);
 }
 
-.status-dot.error, .status-dot.failed {
+.status-dot.error,
+.status-dot.failed {
   background: var(--color-accent-coral);
   box-shadow: 0 0 8px var(--color-accent-coral-glow);
 }
 
-.status-dot.warning, .status-dot.pending {
+.status-dot.warning,
+.status-dot.pending {
   background: var(--color-accent-amber);
   box-shadow: 0 0 8px var(--color-accent-amber-glow);
 }
 
-.status-dot.disconnected, .status-dot.paused, .status-dot.draft {
+.status-dot.disconnected,
+.status-dot.paused,
+.status-dot.draft {
   background: var(--color-text-muted);
 }
 
@@ -386,8 +418,27 @@ html, body {
   white-space: nowrap;
 }
 
-.badge-blue { background: rgba(59, 130, 246, 0.15); color: var(--color-accent-blue); }
-.badge-teal { background: rgba(20, 184, 166, 0.15); color: var(--color-accent-teal); }
-.badge-amber { background: rgba(245, 158, 11, 0.15); color: var(--color-accent-amber); }
-.badge-coral { background: rgba(239, 68, 68, 0.15); color: var(--color-accent-coral); }
-.badge-purple { background: rgba(139, 92, 246, 0.15); color: var(--color-accent-purple); }
+.badge-blue {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--color-accent-blue);
+}
+
+.badge-teal {
+  background: rgba(20, 184, 166, 0.15);
+  color: var(--color-accent-teal);
+}
+
+.badge-amber {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--color-accent-amber);
+}
+
+.badge-coral {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--color-accent-coral);
+}
+
+.badge-purple {
+  background: rgba(139, 92, 246, 0.15);
+  color: var(--color-accent-purple);
+}
