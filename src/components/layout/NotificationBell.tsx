@@ -36,12 +36,12 @@ export default function NotificationBell() {
       .then((r) => r.json())
       .then((data) => {
         const logs = data.logs || [];
-        const mapped: Notification[] = logs.map((log: { id: string; action: string; actor: string; status: string; details: string; created_at: string }, i: number) => ({
+        const mapped: Notification[] = logs.map((log: { id: string; action: string; actor: string; status: string; details: string; timestamp: string }, i: number) => ({
           id: log.id || String(i),
           icon: getIcon(log.action, log.status),
           title: formatAction(log.action),
           detail: log.details || `${log.actor} — ${log.status}`,
-          time: timeAgo(log.created_at),
+          time: timeAgo(log.timestamp),
           read: i > 2,
         }));
         setNotifications(mapped.length > 0 ? mapped : getDefaultNotifications());

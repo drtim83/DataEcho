@@ -17,6 +17,36 @@ const DEMO_CONNECTORS = [
   { id: 'd5', name: 'Finance Oracle', type: 'oracle', category: 'on_prem', status: 'error', host: '10.0.3.8', database: 'FINPROD', tables: 0 },
 ] as const;
 
+// Illustrative table listing shown in the connector detail modal — simulated,
+// same as the rest of this page. Keyed by connector id.
+const DEMO_CONNECTOR_TABLES: Record<string, { name: string; rows: number }[]> = {
+  d1: [
+    { name: 'employees', rows: 1284 },
+    { name: 'departments', rows: 18 },
+    { name: 'payroll', rows: 15408 },
+    { name: 'benefits_enrollment', rows: 1102 },
+  ],
+  d2: [
+    { name: 'orders', rows: 452900 },
+    { name: 'customers', rows: 38210 },
+    { name: 'products', rows: 640 },
+    { name: 'invoices', rows: 61300 },
+  ],
+  d3: [
+    { name: 'fact_sales', rows: 12400000 },
+    { name: 'dim_customer', rows: 38210 },
+    { name: 'dim_product', rows: 640 },
+    { name: 'agg_daily_revenue', rows: 1825 },
+  ],
+  d4: [
+    { name: 'profiles', rows: 12840 },
+    { name: 'orders', rows: 452900 },
+    { name: 'inventory', rows: 9120 },
+    { name: 'api_keys', rows: 42 },
+  ],
+  d5: [],
+};
+
 const DEMO_PIPELINES = [
   { id: 'p1', name: 'Employee 360 Sync', source: 'HR SQL Server', target: 'Analytics Warehouse', direction: 'cloud_bound', status: 'active', records: 128_400 },
   { id: 'p2', name: 'Order Reconciliation', source: 'Sales Postgres', target: 'Product Supabase', direction: 'bidirectional', status: 'active', records: 452_900 },
@@ -88,6 +118,25 @@ type Tab = 'connectors' | 'data' | 'schedule' | 'analytics' | 'metering';
 export default function DemoPage() {
   const [activeTab, setActiveTab] = useState<Tab>('connectors');
   const [selectedTable, setSelectedTable] = useState<keyof typeof DEMO_SAMPLE_DATA>('employees');
+  const [selectedConnector, setSelectedConnector] = useState<(typeof DEMO_CONNECTORS)[number] | null>(null);
+
+  // State for live Supabase connection test
+  const [liveTestStatus, setLiveTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [liveTestMessage, setLiveTestMessage] = useState('');
+
+  async function testLiveSupabase() {
+    setLiveTestStatus('testing');
+    try {
+      const res = await fetch('/api/demo/test-supabase');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Connection failed');
+      setLiveTestStatus('success');
+      setLiveTestMessage(data.details || data.message);
+    } catch (err) {
+      setLiveTestStatus('error');
+      setLiveTestMessage(err instanceof Error ? err.message : 'Connection failed');
+    }
+  }
 
   const tabs: { key: Tab; label: string; icon: string }[] = [
     { key: 'connectors', label: 'Connectors', icon: '🔌' },
@@ -106,7 +155,7 @@ export default function DemoPage() {
         {/* Banner */}
         <div className="p-4 rounded-xl text-xs flex items-start gap-2" style={{ background: 'rgba(139, 92, 246, 0.08)', border: '1px solid rgba(139, 92, 246, 0.2)', color: 'var(--color-accent-purple)' }}>
           <span className="text-sm mt-0.5">🎭</span>
-          <span>Everything on this page is simulated. It never reads from or writes to your real connectors, pipelines, credentials, or billing — safe to use in a walkthrough or sales demo.</span>
+          <span>Everything on this page is simulated data — safe to use in a walkthrough or sales demo. The one exception is the &ldquo;Test Live Connection&rdquo; button below, which does run a real read-only query against your DataEcho Supabase database to prove the connection is live.</span>
         </div>
 
         {/* KPI Cards */}
@@ -160,7 +209,11 @@ export default function DemoPage() {
         {activeTab === 'connectors' && (
           <div className="grid grid-cols-3 gap-4 stagger-children">
             {DEMO_CONNECTORS.map((c) => (
-              <div key={c.id} className="glass-card p-5">
+              <div
+                key={c.id}
+                className="glass-card p-5 cursor-pointer transition-transform hover:scale-[1.01]"
+                onClick={() => setSelectedConnector(c)}
+              >
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex items-center gap-3">
                     <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
@@ -191,13 +244,99 @@ export default function DemoPage() {
                     <p className="text-xs font-medium mt-0.5" style={{ color: 'var(--color-text-primary)' }}>{c.tables}</p>
                   </div>
                 </div>
-                <div className="mt-3">
+                <div className="mt-3 flex items-center justify-between">
                   <span className={`badge text-[10px] ${c.category === 'on_prem' ? 'badge-amber' : 'badge-teal'}`}>
                     {c.category === 'on_prem' ? '🏢 On-Premise' : '☁️ Cloud'}
                   </span>
+                  {c.id === 'd4' && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); testLiveSupabase(); }}
+                      disabled={liveTestStatus === 'testing'}
+                      className="text-[10px] cursor-pointer transition-opacity hover:opacity-80"
+                      style={{ color: 'var(--color-accent-blue)' }}
+                    >
+                      {liveTestStatus === 'testing' ? 'Testing...' : 'Test Live Connection'}
+                    </button>
+                  )}
                 </div>
+                {c.id === 'd4' && liveTestStatus !== 'idle' && (
+                  <div className="mt-3 text-[10px] p-2.5 rounded-lg border" style={{
+                    background: liveTestStatus === 'success' ? 'rgba(20, 184, 166, 0.05)' : liveTestStatus === 'error' ? 'rgba(239, 68, 68, 0.05)' : 'rgba(59, 130, 246, 0.05)',
+                    borderColor: liveTestStatus === 'success' ? 'rgba(20, 184, 166, 0.2)' : liveTestStatus === 'error' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.2)',
+                    color: liveTestStatus === 'success' ? 'var(--color-accent-teal)' : liveTestStatus === 'error' ? 'var(--color-accent-coral)' : 'var(--color-accent-blue)'
+                  }}>
+                    {liveTestStatus === 'testing' ? 'Connecting to DataEcho Supabase...' : liveTestMessage}
+                  </div>
+                )}
               </div>
             ))}
+          </div>
+        )}
+
+        {/* Connector Detail Modal */}
+        {selectedConnector && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.6)' }} onClick={() => setSelectedConnector(null)}>
+            <div className="glass-strong rounded-2xl p-6 w-full max-w-lg animate-fade-in-scale" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl"
+                    style={{
+                      background: selectedConnector.category === 'on_prem' ? 'rgba(245, 158, 11, 0.1)' : 'rgba(20, 184, 166, 0.1)',
+                      border: `1px solid ${selectedConnector.category === 'on_prem' ? 'rgba(245, 158, 11, 0.2)' : 'rgba(20, 184, 166, 0.2)'}`,
+                    }}>
+                    {getConnectorIcon(selectedConnector.type)}
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>{selectedConnector.name}</h3>
+                    <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{getConnectorLabel(selectedConnector.type)}</p>
+                  </div>
+                </div>
+                <button onClick={() => setSelectedConnector(null)} className="text-lg cursor-pointer" style={{ color: 'var(--color-text-muted)' }}>✕</button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 mb-5 pb-5" style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Status</p>
+                  <div className="mt-1"><StatusBadge status={selectedConnector.status} /></div>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Category</p>
+                  <span className={`badge text-[10px] mt-1 ${selectedConnector.category === 'on_prem' ? 'badge-amber' : 'badge-teal'}`}>
+                    {selectedConnector.category === 'on_prem' ? '🏢 On-Premise' : '☁️ Cloud'}
+                  </span>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Host</p>
+                  <p className="text-xs font-mono mt-0.5" style={{ color: 'var(--color-text-secondary)' }}>{selectedConnector.host}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Database</p>
+                  <p className="text-xs font-mono mt-0.5" style={{ color: 'var(--color-text-secondary)' }}>{selectedConnector.database}</p>
+                </div>
+              </div>
+
+              <p className="text-xs font-semibold mb-3" style={{ color: 'var(--color-text-primary)' }}>
+                {selectedConnector.status === 'error' ? '⚠️ Tables' : `📋 Tables (${selectedConnector.tables} total, showing sample)`}
+              </p>
+              {selectedConnector.status === 'error' ? (
+                <p className="text-xs p-3 rounded-lg" style={{ background: 'rgba(239, 68, 68, 0.06)', color: 'var(--color-accent-coral)' }}>
+                  Unable to enumerate tables — connection error. Fix the connector&apos;s credentials in Connector Hub to restore schema browsing.
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {(DEMO_CONNECTOR_TABLES[selectedConnector.id] || []).map((t) => (
+                    <div key={t.name} className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: 'var(--color-bg-primary)' }}>
+                      <span className="text-xs font-mono" style={{ color: 'var(--color-text-secondary)' }}>{t.name}</span>
+                      <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>{formatNumber(t.rows)} rows</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <p className="text-[10px] mt-4 italic" style={{ color: 'var(--color-text-muted)' }}>
+                Simulated for this demo. Real schema browsing (all {selectedConnector.tables} tables, live column types and sample rows) is available in Connector Hub.
+              </p>
+            </div>
           </div>
         )}
 

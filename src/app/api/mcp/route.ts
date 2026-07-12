@@ -4,7 +4,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { createMcpServer } from '@/lib/mcp-server';
 import { requireUser } from '@/lib/supabase/server';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient, User } from '@supabase/supabase-js';
 
 // Next.js App Router doesn't support the persistent SSE connections a standard
 // SSEServerTransport needs, so instead of a separate always-on MCP process we
@@ -12,8 +12,8 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 // pair per request, then dispatch through the actual protocol (client.callTool).
 // This keeps this route as a thin bridge rather than a second copy of the tool logic.
 
-async function withMcpClient<T>(supabase: SupabaseClient, fn: (client: Client) => Promise<T>): Promise<T> {
-  const server = createMcpServer(supabase);
+async function withMcpClient<T>(supabase: SupabaseClient, user: User, fn: (client: Client) => Promise<T>): Promise<T> {
+  const server = createMcpServer(supabase, user);
   const client = new Client({ name: 'dataecho-web-bridge', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -38,7 +38,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing tool name' }, { status: 400 });
     }
 
-    const result = await withMcpClient(supabase, (client) =>
+    const result = await withMcpClient(supabase, user, (client) =>
       client.callTool({ name: tool, arguments: params || {} })
     );
 
@@ -55,7 +55,7 @@ export async function GET() {
   const { supabase, user } = await requireUser();
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-  const tools = await withMcpClient(supabase, (client) => client.listTools());
+  const tools = await withMcpClient(supabase, user, (client) => client.listTools());
   return NextResponse.json({
     name: 'dataecho-mcp-server',
     version: '1.0.0',

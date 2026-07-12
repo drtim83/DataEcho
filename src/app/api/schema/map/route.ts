@@ -1,9 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireUser, errorMessage } from '@/lib/supabase/server';
-import { getConnectorConnectionInput } from '@/lib/connector-helpers';
-import { getColumns } from '@/lib/db-schema';
-import { mapSchemas } from '@/lib/schema-mapper';
-import { logAudit } from '@/lib/audit';
+import { runSchemaMapping, PipelineActionError } from '@/lib/pipeline-actions';
 
 export async function GET(req: Request) {
   try {
@@ -31,54 +28,14 @@ export async function POST(req: Request) {
     const { pipeline_id } = await req.json();
     if (!pipeline_id) return NextResponse.json({ error: 'pipeline_id is required' }, { status: 400 });
 
-    const { data: pipeline, error: pipelineError } = await supabase
-      .from('pipelines')
-      .select('source_id, target_id, source_table, target_table, name')
-      .eq('id', pipeline_id)
-      .single();
+    const { mappings } = await runSchemaMapping(supabase, user, pipeline_id);
 
-    if (pipelineError || !pipeline) {
-      return NextResponse.json({ error: 'Pipeline not found' }, { status: 404 });
-    }
-    if (!pipeline.source_table || !pipeline.target_table) {
-      return NextResponse.json({ error: 'Pipeline is missing a source or target table' }, { status: 400 });
-    }
-
-    const [sourceConn, targetConn] = await Promise.all([
-      getConnectorConnectionInput(supabase, pipeline.source_id),
-      getConnectorConnectionInput(supabase, pipeline.target_id),
-    ]);
-
-    const [sourceCols, targetCols] = await Promise.all([
-      getColumns(sourceConn, pipeline.source_table),
-      getColumns(targetConn, pipeline.target_table),
-    ]);
-
-    const mappings = mapSchemas(sourceCols, targetCols);
-
-    const { error: delError } = await supabase.from('schema_mappings').delete().eq('pipeline_id', pipeline_id);
-    if (delError) throw delError;
-
-    let insertedMappings = [];
-    if (mappings.length > 0) {
-      const { data: inserted, error: insError } = await supabase
-        .from('schema_mappings')
-        .insert(mappings.map((m) => ({ ...m, pipeline_id })))
-        .select('*');
-      if (insError) throw insError;
-      insertedMappings = inserted;
-    }
-
-    await logAudit(supabase, {
-      action: 'schema.map',
-      actor: user.email ?? user.id,
-      status: 'success',
-      details: `Mapped ${mappings.length} columns for pipeline "${pipeline.name}"`,
-      pipeline_id,
-    });
-
-    return NextResponse.json({ mappings: insertedMappings });
+    return NextResponse.json({ mappings });
   } catch (error) {
+    if (error instanceof PipelineActionError) {
+      const status = error.message === 'Pipeline not found' ? 404 : 400;
+      return NextResponse.json({ error: error.message }, { status });
+    }
     console.error('POST /api/schema/map failed:', error);
     return NextResponse.json({ error: errorMessage(error, 'Failed to map schema') }, { status: 500 });
   }

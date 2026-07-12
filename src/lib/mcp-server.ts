@@ -1,13 +1,19 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { errorMessage } from "@/lib/supabase/server";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { getConnectorConnectionInput } from "@/lib/connector-helpers";
+import { getColumns } from "@/lib/db-schema";
+import { runPipelineSync, runSchemaMapping, PipelineActionError } from "@/lib/pipeline-actions";
+import { computeAnalytics } from "@/lib/analytics";
+import type { SupabaseClient, User } from "@supabase/supabase-js";
 
 // Factory so each request (e.g. the /api/mcp route) can spin up an isolated
 // server instance rather than sharing mutable state across concurrent requests.
 // `supabase` must be a request-scoped, authenticated client (see requireUser())
 // so RLS evaluates the calling user's role rather than the anonymous one.
-export function createMcpServer(supabase: SupabaseClient) {
+// `user` backs the actor field on audit log entries written by tools that
+// mutate data (trigger_sync, map_schema) — same as the equivalent API routes.
+export function createMcpServer(supabase: SupabaseClient, user: User) {
   const server = new McpServer({
     name: "dataecho-mcp-server",
     version: "1.0.0"
@@ -34,69 +40,112 @@ export function createMcpServer(supabase: SupabaseClient) {
     }
   );
 
-  // Tool: preview_schema
+  // Tool: preview_schema — real INFORMATION_SCHEMA introspection against the
+  // connector's live database (same code path as GET /api/schema/columns).
   server.tool("preview_schema",
-    "Fetch table/column schema from a connector",
+    "Fetch real table/column schema from a connector",
     {
       connector_id: z.string().describe("ID of the connector"),
-      table_name: z.string().describe("Table name to inspect")
+      table_name: z.string().describe("Table name to inspect (schema.table for a non-default schema)")
     },
     async ({ connector_id, table_name }) => {
-      return {
-        content: [{ type: "text", text: `Schema for ${table_name} on connector ${connector_id}:\nid (INT), name (VARCHAR), created_at (TIMESTAMP)` }]
-      };
+      try {
+        const conn = await getConnectorConnectionInput(supabase, connector_id);
+        const columns = await getColumns(conn, table_name);
+        return { content: [{ type: "text", text: JSON.stringify(columns) }] };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Failed to fetch schema: ${errorMessage(err, String(err))}` }],
+          isError: true,
+        };
+      }
     }
   );
 
-  // Tool: trigger_sync
+  // Tool: trigger_sync — runs the real synchronous sync engine (extracts from
+  // the source connector, loads into the target, records a sync_runs row and
+  // metering event) using the pipeline's already-configured direction and
+  // schema mapping. Same code path as POST /api/pipelines/[id]/run.
   server.tool("trigger_sync",
-    "Trigger sync in specified direction",
+    "Run a real data sync for a pipeline using its configured direction and schema mapping",
     {
-      pipeline_id: z.string().describe("ID of the pipeline"),
-      direction: z.enum(["cloud_bound", "on_prem_bound", "bidirectional"]).describe("Sync direction")
+      pipeline_id: z.string().describe("ID of the pipeline to sync")
     },
-    async ({ pipeline_id, direction }) => {
-      return {
-        content: [{ type: "text", text: `Successfully triggered ${direction} sync for pipeline ${pipeline_id}. Job ID: job-${Date.now()}` }]
-      };
+    async ({ pipeline_id }) => {
+      try {
+        const { run, syncResult, runError, pipelineName } = await runPipelineSync(supabase, user, pipeline_id);
+        if (runError) {
+          return {
+            content: [{ type: "text", text: `Sync failed for pipeline "${pipelineName}": ${runError}` }],
+            isError: true,
+          };
+        }
+        return {
+          content: [{ type: "text", text: `Synced ${syncResult?.recordsLoaded ?? 0} rows for pipeline "${pipelineName}". Run ID: ${run.id}` }]
+        };
+      } catch (err) {
+        const message = err instanceof PipelineActionError ? err.message : errorMessage(err, String(err));
+        return { content: [{ type: "text", text: `Failed to trigger sync: ${message}` }], isError: true };
+      }
     }
   );
 
-  // Tool: get_sync_status
+  // Tool: get_sync_status — real status of a completed or failed run from the
+  // sync_runs table. Runs execute synchronously, so by the time trigger_sync
+  // returns, the run it created is already in a terminal state.
   server.tool("get_sync_status",
-    "Real-time sync progress for a job",
+    "Real status and record count for a sync run",
     {
-      job_id: z.string().describe("ID of the running job")
+      run_id: z.string().describe("ID of the sync run, e.g. as returned by trigger_sync")
     },
-    async ({ job_id }) => {
-      return {
-        content: [{ type: "text", text: `Job ${job_id} is running. Progress: 45%. 15,200 records processed.` }]
-      };
+    async ({ run_id }) => {
+      try {
+        const { data, error } = await supabase
+          .from('sync_runs')
+          .select('id, pipeline_id, direction, status, records, started_at, completed_at, error')
+          .eq('id', run_id)
+          .single();
+        if (error || !data) {
+          return { content: [{ type: "text", text: `Sync run ${run_id} not found` }], isError: true };
+        }
+        return { content: [{ type: "text", text: JSON.stringify(data) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Failed to fetch sync status: ${errorMessage(err, String(err))}` }], isError: true };
+      }
     }
   );
 
-  // Tool: map_schema
+  // Tool: map_schema — runs the real heuristic (Levenshtein + type-category)
+  // mapping engine against the pipeline's live source/target schemas and
+  // persists the result. Same code path as POST /api/schema/map.
   server.tool("map_schema",
-    "AI schema mapping",
+    "Generate and save a real column mapping between a pipeline's source and target tables",
     {
-      source_table: z.string(),
-      target_table: z.string()
+      pipeline_id: z.string().describe("ID of the pipeline to map")
     },
-    async ({ source_table, target_table }) => {
-      return {
-        content: [{ type: "text", text: `AI Mapping Result:\n${source_table}.id -> ${target_table}.id (Confidence 99%)\n${source_table}.full_name -> ${target_table}.name (Confidence 85%)` }]
-      };
+    async ({ pipeline_id }) => {
+      try {
+        const { mappings, pipelineName } = await runSchemaMapping(supabase, user, pipeline_id);
+        return { content: [{ type: "text", text: `Mapped ${mappings.length} columns for pipeline "${pipelineName}":\n${JSON.stringify(mappings)}` }] };
+      } catch (err) {
+        const message = err instanceof PipelineActionError ? err.message : errorMessage(err, String(err));
+        return { content: [{ type: "text", text: `Failed to map schema: ${message}` }], isError: true };
+      }
     }
   );
 
-  // Tool: get_analytics
+  // Tool: get_analytics — real aggregation over sync_runs/pipelines/connectors
+  // (same code path as GET /api/analytics), not canned totals.
   server.tool("get_analytics",
-    "Platform-wide stats & trends",
+    "Real platform-wide stats & trends computed from sync history",
     {},
     async () => {
-      return {
-        content: [{ type: "text", text: JSON.stringify({ total_records: 25000000, avg_latency_ms: 1250, success_rate: 99.5 }) }]
-      };
+      try {
+        const analytics = await computeAnalytics(supabase);
+        return { content: [{ type: "text", text: JSON.stringify(analytics.overview) }] };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Failed to compute analytics: ${errorMessage(err, String(err))}` }], isError: true };
+      }
     }
   );
 
