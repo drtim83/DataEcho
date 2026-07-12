@@ -4,7 +4,13 @@ import { useEffect, useState } from 'react';
 import TopBar from '@/components/layout/TopBar';
 import StatusBadge from '@/components/shared/StatusBadge';
 import { getConnectorIcon, getConnectorLabel, timeAgo } from '@/lib/utils';
-import type { Connector, ConnectorCategory, ConnectorType } from '@/types';
+import type { Connector, ConnectorCategory, ConnectorRole, ConnectorType } from '@/types';
+
+const ROLE_OPTIONS: { value: ConnectorRole; label: string }[] = [
+  { value: 'both', label: 'Source & Target' },
+  { value: 'source', label: 'Source only' },
+  { value: 'target', label: 'Target only' },
+];
 
 const CONNECTOR_TYPES: { value: ConnectorType; label: string; category: ConnectorCategory }[] = [
   { value: 'mssql', label: 'MS SQL Server', category: 'on_prem' },
@@ -30,6 +36,7 @@ const DEFAULT_PORTS: Partial<Record<ConnectorType, number>> = {
 interface FormState {
   name: string;
   type: ConnectorType;
+  role: ConnectorRole;
   host: string;
   port: string;
   database: string;
@@ -40,6 +47,7 @@ interface FormState {
 const emptyForm: FormState = {
   name: '',
   type: 'mssql',
+  role: 'both',
   host: '',
   port: String(DEFAULT_PORTS.mssql),
   database: '',
@@ -309,11 +317,16 @@ export default function ConnectorsPage() {
                   </div>
                 </div>
 
-                {/* Category badge + actions */}
+                {/* Category + role badges + actions */}
                 <div className="mt-3 flex items-center justify-between">
-                  <span className={`badge text-[10px] ${connector.category === 'on_prem' ? 'badge-amber' : 'badge-teal'}`}>
-                    {connector.category === 'on_prem' ? '🏢 On-Premise' : '☁️ Cloud'}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`badge text-[10px] ${connector.category === 'on_prem' ? 'badge-amber' : 'badge-teal'}`}>
+                      {connector.category === 'on_prem' ? '🏢 On-Premise' : '☁️ Cloud'}
+                    </span>
+                    <span className="badge badge-purple text-[10px]">
+                      {connector.role === 'source' ? '→ Source' : connector.role === 'target' ? '← Target' : '↔ Source & Target'}
+                    </span>
+                  </div>
                   <div className="flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
                       onClick={() => openPreview(connector)}
@@ -398,6 +411,17 @@ export default function ConnectorsPage() {
                     onChange={(e) => updateForm('type', e.target.value as ConnectorType)}
                   >
                     {CONNECTOR_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium mb-1.5 uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Role</label>
+                  <select
+                    className="input-field"
+                    style={{ background: 'var(--color-bg-primary)' }}
+                    value={form.role}
+                    onChange={(e) => updateForm('role', e.target.value as ConnectorRole)}
+                  >
+                    {ROLE_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                   </select>
                 </div>
                 <div className="grid grid-cols-2 gap-4">

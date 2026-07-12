@@ -76,6 +76,69 @@ export async function extractRows(input: DbTestInput, table: string, columns: st
   }
 }
 
+async function extractAllColumnsMssql(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
+  const sql = (await import('mssql')).default;
+  const safeTable = sanitizeIdentifier(table).map((p) => `[${p}]`).join('.');
+  const pool = new sql.ConnectionPool({
+    server: input.host, port: input.port || 1433, database: input.database,
+    user: input.username, password: input.password, connectionTimeout: TIMEOUT_MS,
+    options: { encrypt: true, trustServerCertificate: true },
+  });
+  try {
+    await pool.connect();
+    const result = await pool.request().query(`SELECT TOP (${MAX_SYNC_ROWS}) * FROM ${safeTable}`);
+    return result.recordset;
+  } finally {
+    await pool.close().catch(() => {});
+  }
+}
+
+async function extractAllColumnsPostgres(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
+  const { Client } = await import('pg');
+  const safeTable = sanitizeIdentifier(table).map((p) => `"${p}"`).join('.');
+  const client = new Client({
+    host: input.host, port: input.port || 5432, database: input.database,
+    user: input.username, password: input.password, connectionTimeoutMillis: TIMEOUT_MS,
+    ssl: input.type === 'supabase' ? { rejectUnauthorized: false } : undefined,
+  });
+  try {
+    await client.connect();
+    const result = await client.query(`SELECT * FROM ${safeTable} LIMIT ${MAX_SYNC_ROWS}`);
+    return result.rows;
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
+async function extractAllColumnsMysql(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
+  const mysql = await import('mysql2/promise');
+  const safeTable = sanitizeIdentifier(table).map((p) => `\`${p}\``).join('.');
+  const connection = await mysql.createConnection({
+    host: input.host, port: input.port || 3306, database: input.database,
+    user: input.username, password: input.password, connectTimeout: TIMEOUT_MS,
+  });
+  try {
+    const [rows] = await connection.query(`SELECT * FROM ${safeTable} LIMIT ${MAX_SYNC_ROWS}`);
+    return rows as Record<string, unknown>[];
+  } finally {
+    await connection.end().catch(() => {});
+  }
+}
+
+// Used for JOIN sources only: unlike UNION sources (whose needed columns are
+// already fully described by the pipeline's schema mapping), a joined
+// source's useful columns aren't known in advance, so every column comes
+// back and only the ones a mapping actually references end up loaded.
+async function extractAllColumns(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
+  switch (input.type) {
+    case 'mssql': return extractAllColumnsMssql(input, table);
+    case 'postgresql':
+    case 'supabase': return extractAllColumnsPostgres(input, table);
+    case 'mysql': return extractAllColumnsMysql(input, table);
+    default: throw new Error(`Data extraction for ${input.type} is not implemented yet.`);
+  }
+}
+
 async function insertMssql(input: DbTestInput, table: string, columns: string[], rows: Record<string, unknown>[]): Promise<number> {
   const sql = (await import('mssql')).default;
   const safeTable = sanitizeIdentifier(table).map((p) => `[${p}]`).join('.');
@@ -158,10 +221,123 @@ export async function insertRows(input: DbTestInput, table: string, columns: str
   }
 }
 
+async function truncateMssql(input: DbTestInput, table: string): Promise<void> {
+  const sql = (await import('mssql')).default;
+  const safeTable = sanitizeIdentifier(table).map((p) => `[${p}]`).join('.');
+  const pool = new sql.ConnectionPool({
+    server: input.host, port: input.port || 1433, database: input.database,
+    user: input.username, password: input.password, connectionTimeout: TIMEOUT_MS,
+    options: { encrypt: true, trustServerCertificate: true },
+  });
+  try {
+    await pool.connect();
+    await pool.request().query(`TRUNCATE TABLE ${safeTable}`);
+  } finally {
+    await pool.close().catch(() => {});
+  }
+}
+
+async function truncatePostgres(input: DbTestInput, table: string): Promise<void> {
+  const { Client } = await import('pg');
+  const safeTable = sanitizeIdentifier(table).map((p) => `"${p}"`).join('.');
+  const client = new Client({
+    host: input.host, port: input.port || 5432, database: input.database,
+    user: input.username, password: input.password, connectionTimeoutMillis: TIMEOUT_MS,
+    ssl: input.type === 'supabase' ? { rejectUnauthorized: false } : undefined,
+  });
+  try {
+    await client.connect();
+    await client.query(`TRUNCATE TABLE ${safeTable}`);
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
+async function truncateMysql(input: DbTestInput, table: string): Promise<void> {
+  const mysql = await import('mysql2/promise');
+  const safeTable = sanitizeIdentifier(table).map((p) => `\`${p}\``).join('.');
+  const connection = await mysql.createConnection({
+    host: input.host, port: input.port || 3306, database: input.database,
+    user: input.username, password: input.password, connectTimeout: TIMEOUT_MS,
+  });
+  try {
+    await connection.query(`TRUNCATE TABLE ${safeTable}`);
+  } finally {
+    await connection.end().catch(() => {});
+  }
+}
+
+async function truncateTable(input: DbTestInput, table: string): Promise<void> {
+  switch (input.type) {
+    case 'mssql': return truncateMssql(input, table);
+    case 'postgresql':
+    case 'supabase': return truncatePostgres(input, table);
+    case 'mysql': return truncateMysql(input, table);
+    default: throw new Error(`Truncate is not implemented for ${input.type}.`);
+  }
+}
+
+export type SyncMode = 'append' | 'truncate_reload';
+export type FilterOperator = '=' | '!=' | '>' | '<' | '>=' | '<=' | 'contains';
+
+// Structured (column/operator/value) rather than free-form SQL, so a filter
+// can't reopen the injection surface the identifier allowlisting above closes.
+export function matchesFilter(row: Record<string, unknown>, column: string, operator: FilterOperator, value: string): boolean {
+  const actual = row[column];
+  const actualStr = actual === null || actual === undefined ? '' : String(actual);
+  switch (operator) {
+    case '=': return actualStr === value;
+    case '!=': return actualStr !== value;
+    case '>': return Number(actual) > Number(value);
+    case '<': return Number(actual) < Number(value);
+    case '>=': return Number(actual) >= Number(value);
+    case '<=': return Number(actual) <= Number(value);
+    case 'contains': return actualStr.toLowerCase().includes(value.toLowerCase());
+    default: return false;
+  }
+}
+
+// Real measurement of the serialized row payload actually moved, not an estimate.
+function byteSize(rows: Record<string, unknown>[]): number {
+  return rows.reduce((sum, row) => sum + Buffer.byteLength(JSON.stringify(row), 'utf8'), 0);
+}
+
+export interface FilterCondition {
+  column: string;
+  operator: FilterOperator;
+  value: string;
+}
+
+export type MatchMode = 'all' | 'any';
+
+// A destination is sent the rows matching all its conditions (AND) or any
+// of them (OR), per matchMode.
+export function matchesConditions(row: Record<string, unknown>, conditions: FilterCondition[], matchMode: MatchMode): boolean {
+  if (conditions.length === 0) return true;
+  return matchMode === 'any'
+    ? conditions.some((c) => matchesFilter(row, c.column, c.operator, c.value))
+    : conditions.every((c) => matchesFilter(row, c.column, c.operator, c.value));
+}
+
+export interface DestinationSyncInput {
+  id: string;
+  target: DbTestInput;
+  targetTable: string;
+  conditions: FilterCondition[];
+  matchMode: MatchMode;
+}
+
+export interface DestinationSyncResult {
+  destinationId: string;
+  recordsLoaded: number;
+  bytesTransferred: number;
+}
+
 export interface SyncResult {
   recordsExtracted: number;
   recordsLoaded: number;
   bytesTransferred: number;
+  destinationResults: DestinationSyncResult[];
 }
 
 const PREVIEW_ROWS = 25;
@@ -225,17 +401,79 @@ export async function previewTable(input: DbTestInput, table: string): Promise<R
   }
 }
 
+export type CombineMode = 'union' | 'join';
+
+export interface AdditionalSourceInput {
+  source: DbTestInput;
+  sourceTable: string;
+  combineMode: CombineMode;
+  // join-only: this source's key column, and the matching column on the
+  // working row set (the primary source, or the result of any earlier join —
+  // joins apply in the order given, same as chaining SQL `A JOIN B JOIN C`).
+  joinColumn?: string;
+  primaryJoinColumn?: string;
+  joinType?: 'inner' | 'left';
+}
+
 export async function runSync(
   source: DbTestInput,
   sourceTable: string,
   target: DbTestInput,
   targetTable: string,
-  mappings: ColumnMapping[]
+  mappings: ColumnMapping[],
+  syncMode: SyncMode = 'append',
+  additionalSources: AdditionalSourceInput[] = [],
+  destinations: DestinationSyncInput[] = []
 ): Promise<SyncResult> {
   const sourceCols = mappings.map((m) => m.source_col);
-  const rows = await extractRows(source, sourceTable, sourceCols);
 
-  const remapped = rows.map((row) => {
+  // When a join is configured, some mapped columns may live on the joined
+  // source rather than the primary one, so the primary extraction can't be
+  // restricted to sourceCols (it would try to SELECT a column that doesn't
+  // exist on the primary table) — pull every column instead and let the
+  // final remap step pick out whatever each mapping actually references.
+  const hasJoins = additionalSources.some((s) => s.combineMode === 'join');
+  let rows = hasJoins
+    ? await extractAllColumns(source, sourceTable)
+    : await extractRows(source, sourceTable, sourceCols);
+
+  // JOIN sources: a real cross-engine SQL JOIN can't run here (sources may be
+  // on entirely different physical database servers), so each joined source
+  // is extracted independently (every column — its useful columns aren't
+  // known in advance the way a UNION source's are) and merged in memory by
+  // matching key. Primary-side fields win on name conflicts so a join can
+  // enrich a row but never silently overwrite the columns the schema mapping
+  // already resolved.
+  for (const j of additionalSources.filter((s) => s.combineMode === 'join')) {
+    const joinRows = await extractAllColumns(j.source, j.sourceTable);
+    const joinIndex = new Map<string, Record<string, unknown>[]>();
+    for (const jr of joinRows) {
+      const key = String(jr[j.joinColumn!] ?? '');
+      const bucket = joinIndex.get(key);
+      if (bucket) bucket.push(jr); else joinIndex.set(key, [jr]);
+    }
+    const merged: Record<string, unknown>[] = [];
+    for (const row of rows) {
+      const key = String(row[j.primaryJoinColumn!] ?? '');
+      const matches = joinIndex.get(key);
+      if (matches && matches.length > 0) {
+        for (const m of matches) merged.push({ ...m, ...row });
+      } else if (j.joinType === 'left') {
+        merged.push(row);
+      }
+      // inner join, no match: row dropped
+    }
+    rows = merged;
+  }
+
+  // UNION ALL semantics: extract every union source independently (each
+  // already capped at MAX_SYNC_ROWS) and concatenate, then cap the combined
+  // total again to keep the overall row count bounded.
+  const unionSources = additionalSources.filter((s) => s.combineMode === 'union');
+  const unionExtracted = await Promise.all(unionSources.map((s) => extractRows(s.source, s.sourceTable, sourceCols)));
+  rows = rows.concat(unionExtracted.flat()).slice(0, MAX_SYNC_ROWS);
+
+  const remap = (subset: Record<string, unknown>[]) => subset.map((row) => {
     const out: Record<string, unknown> = {};
     for (const m of mappings) {
       out[m.target_col] = row[m.source_col];
@@ -244,10 +482,25 @@ export async function runSync(
   });
 
   const targetCols = mappings.map((m) => m.target_col);
+  const remapped = remap(rows);
+
+  if (syncMode === 'truncate_reload') {
+    await truncateTable(target, targetTable);
+  }
   const inserted = remapped.length > 0 ? await insertRows(target, targetTable, targetCols, remapped) : 0;
+  const bytesTransferred = byteSize(remapped);
 
-  // Real measurement of the serialized row payload actually moved, not an estimate.
-  const bytesTransferred = remapped.reduce((sum, row) => sum + Buffer.byteLength(JSON.stringify(row), 'utf8'), 0);
+  const destinationResults: DestinationSyncResult[] = [];
+  for (const dest of destinations) {
+    const filteredRows = rows.filter((row) => matchesConditions(row, dest.conditions, dest.matchMode));
+    const filteredRemapped = remap(filteredRows);
+    const destInserted = filteredRemapped.length > 0 ? await insertRows(dest.target, dest.targetTable, targetCols, filteredRemapped) : 0;
+    destinationResults.push({
+      destinationId: dest.id,
+      recordsLoaded: destInserted,
+      bytesTransferred: byteSize(filteredRemapped),
+    });
+  }
 
-  return { recordsExtracted: rows.length, recordsLoaded: inserted, bytesTransferred };
+  return { recordsExtracted: rows.length, recordsLoaded: inserted, bytesTransferred, destinationResults };
 }

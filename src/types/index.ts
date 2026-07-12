@@ -5,12 +5,14 @@
 export type ConnectorCategory = 'on_prem' | 'cloud' | 'saas';
 export type ConnectorType = 'mssql' | 'oracle' | 'db2' | 'postgresql' | 'mysql' | 'supabase' | 'snowflake' | 'databricks' | 'iceberg' | 'salesforce' | 'hubspot' | 'stripe';
 export type ConnectorStatus = 'connected' | 'error' | 'disconnected' | 'configuring';
+export type ConnectorRole = 'source' | 'target' | 'both';
 
 export interface Connector {
   id: string;
   name: string;
   type: ConnectorType;
   category: ConnectorCategory;
+  role: ConnectorRole;
   host?: string;
   port?: number;
   database?: string;
@@ -22,6 +24,8 @@ export interface Connector {
 
 export type PipelineDirection = 'cloud_bound' | 'on_prem_bound' | 'bidirectional';
 export type PipelineStatus = 'active' | 'paused' | 'error' | 'draft';
+export type SyncMode = 'append' | 'truncate_reload';
+export type FilterOperator = '=' | '!=' | '>' | '<' | '>=' | '<=' | 'contains';
 
 export interface Pipeline {
   id: string;
@@ -32,9 +36,48 @@ export interface Pipeline {
   target_connector?: Connector;
   direction: PipelineDirection;
   status: PipelineStatus;
+  sync_mode: SyncMode;
   schedule_id?: string;
   last_sync?: string;
   records_synced: number;
+  created_at: string;
+}
+
+export type CombineMode = 'union' | 'join';
+export type JoinType = 'inner' | 'left';
+export type MatchMode = 'all' | 'any';
+
+export interface PipelineSource {
+  id: string;
+  pipeline_id: string;
+  source_id: string;
+  source_table: string;
+  combine_mode: CombineMode;
+  join_type: JoinType;
+  join_column?: string;
+  primary_join_column?: string;
+  connector?: Connector;
+  created_at: string;
+}
+
+export interface DestinationCondition {
+  id: string;
+  filter_column: string;
+  filter_operator: FilterOperator;
+  filter_value: string;
+}
+
+export interface PipelineDestination {
+  id: string;
+  pipeline_id: string;
+  target_id: string;
+  target_table: string;
+  filter_column: string;
+  filter_operator: FilterOperator;
+  filter_value: string;
+  match_mode: MatchMode;
+  pipeline_destination_conditions?: DestinationCondition[];
+  connector?: Connector;
   created_at: string;
 }
 

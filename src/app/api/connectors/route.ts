@@ -3,13 +3,14 @@ import { requireUser, requireAdmin, errorMessage } from '@/lib/supabase/server';
 import { encrypt } from '@/lib/crypto';
 import { logAudit } from '@/lib/audit';
 import { syncConnectorQuantity } from '@/lib/billing-helpers';
-import type { Connector, ConnectorCategory, ConnectorType } from '@/types';
+import type { Connector, ConnectorCategory, ConnectorRole, ConnectorType } from '@/types';
 
 interface ConnectorRow {
   id: string;
   name: string;
   type: ConnectorType;
   category: ConnectorCategory;
+  role: ConnectorRole;
   config: { host?: string; port?: number; database?: string; username?: string };
   status: string;
   tables_count: number | null;
@@ -23,6 +24,7 @@ function toConnector(row: ConnectorRow): Connector {
     name: row.name,
     type: row.type,
     category: row.category,
+    role: row.role,
     host: row.config?.host,
     port: row.config?.port,
     database: row.config?.database,
@@ -40,7 +42,7 @@ export async function GET() {
 
     const { data, error } = await supabase
       .from('connectors')
-      .select('id, name, type, category, config, status, tables_count, last_accessed, created_at')
+      .select('id, name, type, category, role, config, status, tables_count, last_accessed, created_at')
       .order('created_at', { ascending: false });
 
     if (error) throw error;
@@ -59,10 +61,13 @@ export async function POST(req: Request) {
     if (!admin) return NextResponse.json({ error: 'Only admins can manage connectors' }, { status: 403 });
 
     const body = await req.json();
-    const { name, type, category, host, port, database, username, password, status } = body;
+    const { name, type, category, role, host, port, database, username, password, status } = body;
 
     if (!name || !type || !category) {
       return NextResponse.json({ error: 'name, type, and category are required' }, { status: 400 });
+    }
+    if (role && !['source', 'target', 'both'].includes(role)) {
+      return NextResponse.json({ error: 'role must be "source", "target", or "both"' }, { status: 400 });
     }
 
     const { data, error } = await supabase
@@ -71,6 +76,7 @@ export async function POST(req: Request) {
         name,
         type,
         category,
+        role: role || 'both',
         status: status || 'configuring',
         config: {
           host,
@@ -81,7 +87,7 @@ export async function POST(req: Request) {
         },
         last_accessed: new Date().toISOString(),
       })
-      .select('id, name, type, category, config, status, tables_count, last_accessed, created_at')
+      .select('id, name, type, category, role, config, status, tables_count, last_accessed, created_at')
       .single();
 
     if (error) throw error;

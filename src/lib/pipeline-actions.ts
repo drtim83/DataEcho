@@ -2,7 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { User } from '@supabase/supabase-js';
 import { getConnectorConnectionInput } from './connector-helpers';
 import { getColumns } from './db-schema';
-import { runSync, MAX_SYNC_ROWS, type SyncResult } from './db-sync';
+import { runSync, MAX_SYNC_ROWS, type SyncResult, type AdditionalSourceInput, type CombineMode, type DestinationSyncInput, type FilterOperator, type MatchMode, type SyncMode } from './db-sync';
 import { mapSchemas, type ColumnMapping } from './schema-mapper';
 import { computeCost } from './pricing';
 import { reportUsage } from './billing-helpers';
@@ -37,6 +37,11 @@ export async function runPipelineSync(supabase: SupabaseClient, user: User, pipe
     throw new PipelineActionError('No schema mapping exists for this pipeline yet. Map the schema before running.');
   }
 
+  const [{ data: extraSources }, { data: destinationRows }] = await Promise.all([
+    supabase.from('pipeline_sources').select('id, source_id, source_table, combine_mode, join_type, join_column, primary_join_column').eq('pipeline_id', pipelineId),
+    supabase.from('pipeline_destinations').select('id, target_id, target_table, filter_column, filter_operator, filter_value, match_mode, pipeline_destination_conditions(filter_column, filter_operator, filter_value)').eq('pipeline_id', pipelineId),
+  ]);
+
   const startedAt = new Date().toISOString();
 
   let syncResult: SyncResult | undefined;
@@ -46,7 +51,44 @@ export async function runPipelineSync(supabase: SupabaseClient, user: User, pipe
       getConnectorConnectionInput(supabase, pipeline.source_id),
       getConnectorConnectionInput(supabase, pipeline.target_id),
     ]);
-    syncResult = await runSync(sourceConn, pipeline.source_table, targetConn, pipeline.target_table, mappingRows as ColumnMapping[]);
+
+    const additionalSources: AdditionalSourceInput[] = await Promise.all(
+      (extraSources ?? []).map(async (s) => ({
+        source: await getConnectorConnectionInput(supabase, s.source_id),
+        sourceTable: s.source_table as string,
+        combineMode: (s.combine_mode as CombineMode) ?? 'union',
+        joinType: s.join_type as 'inner' | 'left' | undefined,
+        joinColumn: s.join_column as string | undefined,
+        primaryJoinColumn: s.primary_join_column as string | undefined,
+      }))
+    );
+
+    const destinations: DestinationSyncInput[] = await Promise.all(
+      (destinationRows ?? []).map(async (d) => {
+        const extraConditions = (d.pipeline_destination_conditions ?? []) as { filter_column: string; filter_operator: FilterOperator; filter_value: string }[];
+        return {
+          id: d.id as string,
+          target: await getConnectorConnectionInput(supabase, d.target_id),
+          targetTable: d.target_table as string,
+          matchMode: (d.match_mode as MatchMode) ?? 'all',
+          conditions: [
+            { column: d.filter_column as string, operator: d.filter_operator as FilterOperator, value: d.filter_value as string },
+            ...extraConditions.map((c) => ({ column: c.filter_column, operator: c.filter_operator, value: c.filter_value })),
+          ],
+        };
+      })
+    );
+
+    syncResult = await runSync(
+      sourceConn,
+      pipeline.source_table,
+      targetConn,
+      pipeline.target_table,
+      mappingRows as ColumnMapping[],
+      (pipeline.sync_mode as SyncMode) ?? 'append',
+      additionalSources,
+      destinations
+    );
   } catch (err) {
     runError = errorMessage(err, 'Sync failed');
   }
@@ -73,20 +115,30 @@ export async function runPipelineSync(supabase: SupabaseClient, user: User, pipe
   await supabase.from('pipelines').update({ status: runError ? 'error' : 'active' }).eq('id', pipelineId);
 
   if (!runError && syncResult) {
+    // Total across the primary target and every filtered destination — all of
+    // it is real data that really moved, so all of it counts for cost/usage,
+    // even though sync_runs.records stays scoped to the primary target.
+    const totalRecords = syncResult.recordsLoaded + syncResult.destinationResults.reduce((s, d) => s + d.recordsLoaded, 0);
+    const totalBytes = syncResult.bytesTransferred + syncResult.destinationResults.reduce((s, d) => s + d.bytesTransferred, 0);
+
     const computeMs = new Date(completedAt).getTime() - new Date(startedAt).getTime();
-    const cost = computeCost(pipeline.direction, syncResult.recordsLoaded, computeMs);
+    const cost = computeCost(pipeline.direction, totalRecords, computeMs);
     const { error: meteringError } = await supabase.from('metering_events').insert({
       pipeline_id: pipelineId,
       direction: pipeline.direction,
-      records: syncResult.recordsLoaded,
-      bytes: syncResult.bytesTransferred,
+      records: totalRecords,
+      bytes: totalBytes,
       compute_ms: computeMs,
       cost_usd: cost,
     });
     if (meteringError) console.error('Failed to write metering event:', meteringError);
 
-    await reportUsage(supabase, syncResult.bytesTransferred);
+    await reportUsage(supabase, totalBytes);
   }
+
+  const destinationSummary = syncResult && syncResult.destinationResults.length > 0
+    ? ` + ${syncResult.destinationResults.reduce((s, d) => s + d.recordsLoaded, 0)} rows across ${syncResult.destinationResults.length} additional destination(s)`
+    : '';
 
   await logAudit(supabase, {
     action: 'pipeline.run',
@@ -94,7 +146,7 @@ export async function runPipelineSync(supabase: SupabaseClient, user: User, pipe
     status: runError ? 'error' : 'success',
     details: runError
       ? `Sync failed for pipeline "${pipeline.name}": ${runError}`
-      : `Synced ${syncResult?.recordsLoaded ?? 0} rows for pipeline "${pipeline.name}" (capped at ${MAX_SYNC_ROWS})`,
+      : `Synced ${syncResult?.recordsLoaded ?? 0} rows for pipeline "${pipeline.name}"${destinationSummary} (capped at ${MAX_SYNC_ROWS})`,
     pipeline_id: pipelineId,
     records_affected: syncResult?.recordsLoaded,
   });

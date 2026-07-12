@@ -22,7 +22,9 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
 import TopBar from '@/components/layout/TopBar';
 import { getConnectorIcon, getConnectorLabel } from '@/lib/utils';
-import type { Connector, Pipeline, PipelineDirection } from '@/types';
+import type { Connector, CombineMode, FilterOperator, JoinType, MatchMode, Pipeline, PipelineDestination, PipelineDirection, PipelineSource, SyncMode } from '@/types';
+
+const FILTER_OPERATORS: FilterOperator[] = ['=', '!=', '>', '<', '>=', '<=', 'contains'];
 
 // ============================================================
 // Custom Node Components
@@ -135,9 +137,36 @@ interface NewPipelineForm {
   source_table: string;
   target_table: string;
   direction: PipelineDirection;
+  sync_mode: SyncMode;
 }
 
-const emptyForm: NewPipelineForm = { name: '', source_connector_id: '', target_connector_id: '', source_table: '', target_table: '', direction: 'cloud_bound' };
+const emptyForm: NewPipelineForm = { name: '', source_connector_id: '', target_connector_id: '', source_table: '', target_table: '', direction: 'cloud_bound', sync_mode: 'append' };
+
+interface SourceForm {
+  source_connector_id: string;
+  source_table: string;
+  combine_mode: CombineMode;
+  join_type: JoinType;
+  join_column: string;
+  primary_join_column: string;
+}
+const emptySourceForm: SourceForm = { source_connector_id: '', source_table: '', combine_mode: 'union', join_type: 'inner', join_column: '', primary_join_column: '' };
+
+interface DestinationForm {
+  target_connector_id: string;
+  target_table: string;
+  filter_column: string;
+  filter_operator: FilterOperator;
+  filter_value: string;
+}
+const emptyDestinationForm: DestinationForm = { target_connector_id: '', target_table: '', filter_column: '', filter_operator: '=', filter_value: '' };
+
+interface ConditionDraft {
+  filter_column: string;
+  filter_operator: FilterOperator;
+  filter_value: string;
+}
+const emptyConditionDraft: ConditionDraft = { filter_column: '', filter_operator: '=', filter_value: '' };
 
 export default function CanvasPage() {
   return (
@@ -163,6 +192,16 @@ function CanvasPageInner() {
   const [form, setForm] = useState<NewPipelineForm>(emptyForm);
   const [sourceTables, setSourceTables] = useState<string[]>([]);
   const [targetTables, setTargetTables] = useState<string[]>([]);
+
+  const [showFanoutModal, setShowFanoutModal] = useState(false);
+  const [pipelineSources, setPipelineSources] = useState<PipelineSource[]>([]);
+  const [pipelineDestinations, setPipelineDestinations] = useState<PipelineDestination[]>([]);
+  const [sourceForm, setSourceForm] = useState<SourceForm>(emptySourceForm);
+  const [sourceFormTables, setSourceFormTables] = useState<string[]>([]);
+  const [destForm, setDestForm] = useState<DestinationForm>(emptyDestinationForm);
+  const [destFormTables, setDestFormTables] = useState<string[]>([]);
+  const [fanoutSaving, setFanoutSaving] = useState(false);
+  const [conditionDrafts, setConditionDrafts] = useState<Record<string, ConditionDraft>>({});
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -291,6 +330,127 @@ function CanvasPageInner() {
     (which === 'source' ? setSourceTables : setTargetTables)(data.tables || []);
   }
 
+  async function loadFanout(pipelineId: string) {
+    const [sRes, dRes] = await Promise.all([
+      fetch(`/api/pipelines/${pipelineId}/sources`),
+      fetch(`/api/pipelines/${pipelineId}/destinations`),
+    ]);
+    const sData = await sRes.json();
+    const dData = await dRes.json();
+    setPipelineSources(sData.sources || []);
+    setPipelineDestinations(dData.destinations || []);
+  }
+
+  function openFanoutModal() {
+    if (!selectedPipeline) return;
+    setSourceForm(emptySourceForm);
+    setSourceFormTables([]);
+    setDestForm(emptyDestinationForm);
+    setDestFormTables([]);
+    loadFanout(selectedPipeline.id);
+    setShowFanoutModal(true);
+  }
+
+  async function loadTablesForFanout(connectorId: string, which: 'source' | 'dest') {
+    if (!connectorId) { (which === 'source' ? setSourceFormTables : setDestFormTables)([]); return; }
+    const res = await fetch(`/api/schema/tables?connector_id=${connectorId}`);
+    const data = await res.json();
+    (which === 'source' ? setSourceFormTables : setDestFormTables)(data.tables || []);
+  }
+
+  async function handleAddSource() {
+    if (!selectedPipeline || !sourceForm.source_connector_id || !sourceForm.source_table) return;
+    if (sourceForm.combine_mode === 'join' && (!sourceForm.join_column || !sourceForm.primary_join_column)) return;
+    setFanoutSaving(true);
+    try {
+      const res = await fetch(`/api/pipelines/${selectedPipeline.id}/sources`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_id: sourceForm.source_connector_id,
+          source_table: sourceForm.source_table,
+          combine_mode: sourceForm.combine_mode,
+          join_type: sourceForm.join_type,
+          join_column: sourceForm.combine_mode === 'join' ? sourceForm.join_column : undefined,
+          primary_join_column: sourceForm.combine_mode === 'join' ? sourceForm.primary_join_column : undefined,
+        }),
+      });
+      if (res.ok) {
+        setSourceForm(emptySourceForm);
+        setSourceFormTables([]);
+        await loadFanout(selectedPipeline.id);
+      }
+    } finally {
+      setFanoutSaving(false);
+    }
+  }
+
+  async function handleDeleteSource(sourceId: string) {
+    if (!selectedPipeline) return;
+    await fetch(`/api/pipelines/${selectedPipeline.id}/sources/${sourceId}`, { method: 'DELETE' });
+    await loadFanout(selectedPipeline.id);
+  }
+
+  async function handleAddDestination() {
+    if (!selectedPipeline || !destForm.target_connector_id || !destForm.target_table || !destForm.filter_column || !destForm.filter_value) return;
+    setFanoutSaving(true);
+    try {
+      const res = await fetch(`/api/pipelines/${selectedPipeline.id}/destinations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          target_id: destForm.target_connector_id,
+          target_table: destForm.target_table,
+          filter_column: destForm.filter_column,
+          filter_operator: destForm.filter_operator,
+          filter_value: destForm.filter_value,
+        }),
+      });
+      if (res.ok) {
+        setDestForm(emptyDestinationForm);
+        setDestFormTables([]);
+        await loadFanout(selectedPipeline.id);
+      }
+    } finally {
+      setFanoutSaving(false);
+    }
+  }
+
+  async function handleDeleteDestination(destId: string) {
+    if (!selectedPipeline) return;
+    await fetch(`/api/pipelines/${selectedPipeline.id}/destinations/${destId}`, { method: 'DELETE' });
+    await loadFanout(selectedPipeline.id);
+  }
+
+  async function handleMatchModeChange(destId: string, matchMode: MatchMode) {
+    if (!selectedPipeline) return;
+    await fetch(`/api/pipelines/${selectedPipeline.id}/destinations/${destId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ match_mode: matchMode }),
+    });
+    await loadFanout(selectedPipeline.id);
+  }
+
+  async function handleAddCondition(destId: string) {
+    if (!selectedPipeline) return;
+    const draft = conditionDrafts[destId] ?? emptyConditionDraft;
+    if (!draft.filter_column || !draft.filter_value) return;
+    await fetch(`/api/pipelines/${selectedPipeline.id}/destinations/${destId}/conditions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(draft),
+    });
+    setConditionDrafts((prev) => ({ ...prev, [destId]: emptyConditionDraft }));
+    await loadFanout(selectedPipeline.id);
+  }
+
+  async function handleDeleteCondition(destId: string, conditionId: string) {
+    if (!selectedPipeline) return;
+    await fetch(`/api/pipelines/${selectedPipeline.id}/destinations/${destId}/conditions/${conditionId}`, { method: 'DELETE' });
+    await loadFanout(selectedPipeline.id);
+  }
+
   async function handleCreatePipeline() {
     const res = await fetch('/api/pipelines', {
       method: 'POST',
@@ -309,28 +469,29 @@ function CanvasPageInner() {
   return (
     <>
       <TopBar title="Visual Pipeline Canvas" subtitle={selectedPipeline ? `Editing: ${selectedPipeline.name}` : 'No pipeline selected'} />
-      <div className="flex items-center gap-3 px-6 py-3" style={{ borderBottom: '1px solid var(--color-border-subtle)', background: 'var(--color-bg-surface)' }}>
+      <div className="flex items-center gap-3 px-6 py-3 overflow-x-auto" style={{ borderBottom: '1px solid var(--color-border-subtle)', background: 'var(--color-bg-surface)' }}>
         <select
-          className="input-field w-auto text-xs"
-          style={{ background: 'var(--color-bg-primary)' }}
+          className="input-field text-xs flex-shrink-0"
+          style={{ background: 'var(--color-bg-primary)', width: '200px' }}
           value={selectedId}
           onChange={(e) => setSelectedId(e.target.value)}
         >
           {pipelines.length === 0 && <option value="">No pipelines yet</option>}
           {pipelines.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        <button className="btn-secondary text-xs" onClick={() => setShowModal(true)}>+ New Pipeline</button>
-        <div className="ml-auto flex items-center gap-2">
+        <button className="btn-secondary text-xs whitespace-nowrap flex-shrink-0" onClick={() => setShowModal(true)}>+ New Pipeline</button>
+        <button className="btn-secondary text-xs whitespace-nowrap flex-shrink-0 disabled:opacity-50" onClick={openFanoutModal} disabled={!selectedPipeline}>🔀 Sources &amp; Targets</button>
+        <div className="ml-auto flex items-center gap-2 flex-shrink-0">
           <button
-            className="text-xs px-3 py-1.5 rounded-lg disabled:opacity-50"
+            className="text-xs px-3 py-1.5 rounded-lg whitespace-nowrap disabled:opacity-50"
             style={{ color: 'var(--color-accent-coral)', border: '1px solid rgba(239, 68, 68, 0.3)' }}
             onClick={handleDelete}
             disabled={!selectedPipeline || deleting}
           >
             {deleting ? 'Deleting…' : '🗑️ Delete'}
           </button>
-          <button className="btn-secondary text-xs" onClick={handleSave} disabled={!selectedPipeline || saving}>{saving ? 'Saving…' : '💾 Save'}</button>
-          <button className="btn-primary text-xs" onClick={handleRun} disabled={!selectedPipeline || running}>{running ? 'Running…' : '▶️ Run'}</button>
+          <button className="btn-secondary text-xs whitespace-nowrap" onClick={handleSave} disabled={!selectedPipeline || saving}>{saving ? 'Saving…' : '💾 Save'}</button>
+          <button className="btn-primary text-xs whitespace-nowrap" onClick={handleRun} disabled={!selectedPipeline || running}>{running ? 'Running…' : '▶️ Run'}</button>
         </div>
       </div>
       {runResult && (
@@ -418,7 +579,7 @@ function CanvasPageInner() {
                   <select className="input-field" style={{ background: 'var(--color-bg-primary)' }} value={form.source_connector_id}
                     onChange={(e) => { setForm({ ...form, source_connector_id: e.target.value, source_table: '' }); loadTablesFor(e.target.value, 'source'); }}>
                     <option value="">Select…</option>
-                    {connectors.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    {connectors.filter((c) => c.role !== 'target').map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -436,7 +597,7 @@ function CanvasPageInner() {
                   <select className="input-field" style={{ background: 'var(--color-bg-primary)' }} value={form.target_connector_id}
                     onChange={(e) => { setForm({ ...form, target_connector_id: e.target.value, target_table: '' }); loadTablesFor(e.target.value, 'target'); }}>
                     <option value="">Select…</option>
-                    {connectors.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    {connectors.filter((c) => c.role !== 'source').map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -457,6 +618,14 @@ function CanvasPageInner() {
                   <option value="bidirectional">Bidirectional</option>
                 </select>
               </div>
+              <div>
+                <label className="block text-xs font-medium mb-1.5 uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Sync Mode</label>
+                <select className="input-field" style={{ background: 'var(--color-bg-primary)' }} value={form.sync_mode}
+                  onChange={(e) => setForm({ ...form, sync_mode: e.target.value as SyncMode })}>
+                  <option value="append">Append (insert every run)</option>
+                  <option value="truncate_reload">Truncate & Reload (clear target before every run)</option>
+                </select>
+              </div>
               <div className="flex gap-3 pt-2">
                 <button className="btn-secondary flex-1" onClick={() => setShowModal(false)}>Cancel</button>
                 <button
@@ -467,6 +636,173 @@ function CanvasPageInner() {
                   Create Pipeline
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showFanoutModal && selectedPipeline && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.6)' }}>
+          <div className="glass-strong rounded-2xl p-6 w-full max-w-2xl animate-fade-in-scale" style={{ maxHeight: '85vh', overflowY: 'auto' }}>
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h3 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>Sources &amp; Destinations</h3>
+                <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>{selectedPipeline.name}</p>
+              </div>
+              <button onClick={() => setShowFanoutModal(false)} className="text-lg cursor-pointer" style={{ color: 'var(--color-text-muted)' }}>✕</button>
+            </div>
+
+            {/* Additional Sources */}
+            <div className="mb-6">
+              <h4 className="text-sm font-semibold mb-1" style={{ color: 'var(--color-text-primary)' }}>Additional Sources (UNION / JOIN)</h4>
+              <p className="text-[11px] mb-3" style={{ color: 'var(--color-text-muted)' }}>
+                <strong>Union</strong>: extracted alongside the primary source and concatenated — tables must share the mapping&apos;s source columns. <strong>Join</strong>: matched to the current rows by key and merged in — a real cross-database JOIN can&apos;t run in SQL here, so this runs as an in-memory join.
+              </p>
+              {pipelineSources.length > 0 && (
+                <div className="space-y-1.5 mb-3">
+                  {pipelineSources.map((s) => (
+                    <div key={s.id} className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: 'var(--color-bg-primary)' }}>
+                      <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                        {s.connector?.name ?? s.source_id} · <span className="font-mono">{s.source_table}</span>
+                        {s.combine_mode === 'join' ? (
+                          <> · JOIN ({s.join_type}) on <span className="font-mono">{s.primary_join_column} = {s.join_column}</span></>
+                        ) : ' · UNION'}
+                      </span>
+                      <button onClick={() => handleDeleteSource(s.id)} className="text-[10px] cursor-pointer" style={{ color: 'var(--color-accent-coral)' }}>Remove</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="space-y-2">
+                <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-end">
+                  <select className="input-field text-xs" style={{ background: 'var(--color-bg-primary)' }} value={sourceForm.source_connector_id}
+                    onChange={(e) => { setSourceForm({ ...sourceForm, source_connector_id: e.target.value, source_table: '' }); loadTablesForFanout(e.target.value, 'source'); }}>
+                    <option value="">Connector…</option>
+                    {connectors.filter((c) => c.role !== 'target').map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  <select className="input-field text-xs" style={{ background: 'var(--color-bg-primary)' }} value={sourceForm.source_table}
+                    onChange={(e) => setSourceForm({ ...sourceForm, source_table: e.target.value })} disabled={sourceFormTables.length === 0}>
+                    <option value="">Table…</option>
+                    {sourceFormTables.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <select className="input-field text-xs w-auto" style={{ background: 'var(--color-bg-primary)' }} value={sourceForm.combine_mode}
+                    onChange={(e) => setSourceForm({ ...sourceForm, combine_mode: e.target.value as CombineMode })}>
+                    <option value="union">Union</option>
+                    <option value="join">Join</option>
+                  </select>
+                </div>
+                {sourceForm.combine_mode === 'join' && (
+                  <div className="grid grid-cols-[1fr_1fr_auto_auto] gap-2">
+                    <input className="input-field text-xs" placeholder="Primary source column (e.g. customer_id)" value={sourceForm.primary_join_column}
+                      onChange={(e) => setSourceForm({ ...sourceForm, primary_join_column: e.target.value })} />
+                    <input className="input-field text-xs" placeholder="This source's column (e.g. id)" value={sourceForm.join_column}
+                      onChange={(e) => setSourceForm({ ...sourceForm, join_column: e.target.value })} />
+                    <select className="input-field text-xs w-auto" style={{ background: 'var(--color-bg-primary)' }} value={sourceForm.join_type}
+                      onChange={(e) => setSourceForm({ ...sourceForm, join_type: e.target.value as JoinType })}>
+                      <option value="inner">Inner</option>
+                      <option value="left">Left</option>
+                    </select>
+                    <button className="btn-secondary text-xs disabled:opacity-50" disabled={fanoutSaving || !sourceForm.source_connector_id || !sourceForm.source_table || !sourceForm.join_column || !sourceForm.primary_join_column} onClick={handleAddSource}>+ Add</button>
+                  </div>
+                )}
+                {sourceForm.combine_mode === 'union' && (
+                  <div className="flex justify-end">
+                    <button className="btn-secondary text-xs disabled:opacity-50" disabled={fanoutSaving || !sourceForm.source_connector_id || !sourceForm.source_table} onClick={handleAddSource}>+ Add</button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Additional Destinations */}
+            <div>
+              <h4 className="text-sm font-semibold mb-1" style={{ color: 'var(--color-text-primary)' }}>Additional Destinations (filtered push-back)</h4>
+              <p className="text-[11px] mb-3" style={{ color: 'var(--color-text-muted)' }}>
+                Each destination gets the subset of extracted rows matching its filter, e.g. push rows where <code>region = APAC</code> to a regional system.
+              </p>
+              {pipelineDestinations.length > 0 && (
+                <div className="space-y-2 mb-3">
+                  {pipelineDestinations.map((d) => {
+                    const extraConditions = d.pipeline_destination_conditions ?? [];
+                    const draft = conditionDrafts[d.id] ?? emptyConditionDraft;
+                    return (
+                      <div key={d.id} className="px-3 py-2.5 rounded-lg" style={{ background: 'var(--color-bg-primary)' }}>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                            {d.connector?.name ?? d.target_id} · <span className="font-mono">{d.target_table}</span>
+                          </span>
+                          <button onClick={() => handleDeleteDestination(d.id)} className="text-[10px] cursor-pointer" style={{ color: 'var(--color-accent-coral)' }}>Remove destination</button>
+                        </div>
+
+                        <div className="mt-2 flex items-center gap-2 flex-wrap">
+                          <span className="badge badge-blue text-[10px] font-mono">{d.filter_column} {d.filter_operator} {d.filter_value}</span>
+                          {extraConditions.length > 0 && (
+                            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>{d.match_mode === 'any' ? 'OR' : 'AND'}</span>
+                          )}
+                          {extraConditions.map((c) => (
+                            <span key={c.id} className="badge badge-blue text-[10px] font-mono flex items-center gap-1.5">
+                              {c.filter_column} {c.filter_operator} {c.filter_value}
+                              <button onClick={() => handleDeleteCondition(d.id, c.id)} className="cursor-pointer" style={{ color: 'var(--color-accent-coral)' }}>✕</button>
+                            </span>
+                          ))}
+                        </div>
+
+                        {extraConditions.length > 0 && (
+                          <div className="mt-2 flex items-center gap-2">
+                            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>Match:</span>
+                            <select className="input-field text-[10px] w-auto py-0.5" style={{ background: 'var(--color-bg-elevated)' }} value={d.match_mode}
+                              onChange={(e) => handleMatchModeChange(d.id, e.target.value as MatchMode)}>
+                              <option value="all">All conditions (AND)</option>
+                              <option value="any">Any condition (OR)</option>
+                            </select>
+                          </div>
+                        )}
+
+                        <div className="mt-2 grid grid-cols-[1fr_auto_1fr_auto] gap-1.5">
+                          <input className="input-field text-[10px] py-1" placeholder="+ column" value={draft.filter_column}
+                            onChange={(e) => setConditionDrafts((prev) => ({ ...prev, [d.id]: { ...draft, filter_column: e.target.value } }))} />
+                          <select className="input-field text-[10px] w-auto py-1" style={{ background: 'var(--color-bg-elevated)' }} value={draft.filter_operator}
+                            onChange={(e) => setConditionDrafts((prev) => ({ ...prev, [d.id]: { ...draft, filter_operator: e.target.value as FilterOperator } }))}>
+                            {FILTER_OPERATORS.map((op) => <option key={op} value={op}>{op}</option>)}
+                          </select>
+                          <input className="input-field text-[10px] py-1" placeholder="value" value={draft.filter_value}
+                            onChange={(e) => setConditionDrafts((prev) => ({ ...prev, [d.id]: { ...draft, filter_value: e.target.value } }))} />
+                          <button className="text-[10px] px-2 rounded disabled:opacity-50 cursor-pointer" style={{ color: 'var(--color-accent-blue)' }}
+                            disabled={!draft.filter_column || !draft.filter_value} onClick={() => handleAddCondition(d.id)}>+ Condition</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <select className="input-field text-xs" style={{ background: 'var(--color-bg-primary)' }} value={destForm.target_connector_id}
+                    onChange={(e) => { setDestForm({ ...destForm, target_connector_id: e.target.value, target_table: '' }); loadTablesForFanout(e.target.value, 'dest'); }}>
+                    <option value="">Connector…</option>
+                    {connectors.filter((c) => c.role !== 'source').map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  <select className="input-field text-xs" style={{ background: 'var(--color-bg-primary)' }} value={destForm.target_table}
+                    onChange={(e) => setDestForm({ ...destForm, target_table: e.target.value })} disabled={destFormTables.length === 0}>
+                    <option value="">Table…</option>
+                    {destFormTables.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div className="grid grid-cols-[1fr_auto_1fr_auto] gap-2">
+                  <input className="input-field text-xs" placeholder="Filter column (e.g. region)" value={destForm.filter_column}
+                    onChange={(e) => setDestForm({ ...destForm, filter_column: e.target.value })} />
+                  <select className="input-field text-xs w-auto" style={{ background: 'var(--color-bg-primary)' }} value={destForm.filter_operator}
+                    onChange={(e) => setDestForm({ ...destForm, filter_operator: e.target.value as FilterOperator })}>
+                    {FILTER_OPERATORS.map((op) => <option key={op} value={op}>{op}</option>)}
+                  </select>
+                  <input className="input-field text-xs" placeholder="Value (e.g. APAC)" value={destForm.filter_value}
+                    onChange={(e) => setDestForm({ ...destForm, filter_value: e.target.value })} />
+                  <button className="btn-secondary text-xs disabled:opacity-50" disabled={fanoutSaving || !destForm.target_connector_id || !destForm.target_table || !destForm.filter_column || !destForm.filter_value} onClick={handleAddDestination}>+ Add</button>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-4 mt-4" style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
+              <button className="btn-primary text-xs" onClick={() => setShowFanoutModal(false)}>Done</button>
             </div>
           </div>
         </div>

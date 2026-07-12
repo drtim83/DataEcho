@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireUser, errorMessage } from '@/lib/supabase/server';
 import { logAudit } from '@/lib/audit';
-import type { Connector, Pipeline, PipelineDirection } from '@/types';
+import type { Connector, Pipeline, PipelineDirection, SyncMode } from '@/types';
 
 interface PipelineRow {
   id: string;
@@ -12,6 +12,7 @@ interface PipelineRow {
   target_table: string | null;
   direction: PipelineDirection;
   status: string;
+  sync_mode: SyncMode;
   created_at: string;
 }
 
@@ -20,6 +21,7 @@ interface ConnectorRow {
   name: string;
   type: Connector['type'];
   category: Connector['category'];
+  role: Connector['role'];
   config: { host?: string; port?: number; database?: string };
   status: string;
 }
@@ -31,6 +33,7 @@ function toConnectorSummary(row?: ConnectorRow): Connector | undefined {
     name: row.name,
     type: row.type,
     category: row.category,
+    role: row.role,
     host: row.config?.host,
     port: row.config?.port,
     database: row.config?.database,
@@ -48,7 +51,7 @@ export async function GET() {
 
     const [{ data: pipelines, error: pipelinesError }, { data: connectors, error: connectorsError }, { data: runs, error: runsError }] = await Promise.all([
       supabase.from('pipelines').select('*').order('created_at', { ascending: false }),
-      supabase.from('connectors').select('id, name, type, category, config, status'),
+      supabase.from('connectors').select('id, name, type, category, role, config, status'),
       supabase.from('sync_runs').select('pipeline_id, records, started_at').order('started_at', { ascending: false }),
     ]);
 
@@ -74,6 +77,7 @@ export async function GET() {
         target_table: p.target_table ?? undefined,
         direction: p.direction,
         status: p.status as Pipeline['status'],
+        sync_mode: p.sync_mode ?? 'append',
         last_sync,
         records_synced,
         created_at: p.created_at,
@@ -93,10 +97,13 @@ export async function POST(req: Request) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await req.json();
-    const { name, source_connector_id, target_connector_id, source_table, target_table, direction } = body;
+    const { name, source_connector_id, target_connector_id, source_table, target_table, direction, sync_mode } = body;
 
     if (!name || !source_connector_id || !target_connector_id || !source_table || !target_table) {
       return NextResponse.json({ error: 'name, source/target connector, and source/target table are required' }, { status: 400 });
+    }
+    if (sync_mode && !['append', 'truncate_reload'].includes(sync_mode)) {
+      return NextResponse.json({ error: 'sync_mode must be "append" or "truncate_reload"' }, { status: 400 });
     }
 
     const { data, error } = await supabase
@@ -108,6 +115,7 @@ export async function POST(req: Request) {
         source_table,
         target_table,
         direction: direction || 'cloud_bound',
+        sync_mode: sync_mode || 'append',
         status: 'draft',
       })
       .select('*')
