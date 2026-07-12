@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
-import { requireUser, errorMessage } from '@/lib/supabase/server';
+import { requireUser, requireAdmin, errorMessage } from '@/lib/supabase/server';
 import { encrypt } from '@/lib/crypto';
 import { logAudit } from '@/lib/audit';
+import { syncConnectorQuantity } from '@/lib/billing-helpers';
 import type { Connector, ConnectorCategory, ConnectorType } from '@/types';
 
 interface ConnectorRow {
@@ -53,8 +54,9 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const { supabase, user } = await requireUser();
+    const { supabase, user, admin } = await requireAdmin();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!admin) return NextResponse.json({ error: 'Only admins can manage connectors' }, { status: 403 });
 
     const body = await req.json();
     const { name, type, category, host, port, database, username, password, status } = body;
@@ -90,6 +92,8 @@ export async function POST(req: Request) {
       status: 'success',
       details: `Created connector "${name}" (${type})`,
     });
+
+    await syncConnectorQuantity(supabase);
 
     return NextResponse.json({ connector: toConnector(data as ConnectorRow) }, { status: 201 });
   } catch (error) {

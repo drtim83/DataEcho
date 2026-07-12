@@ -14,10 +14,12 @@ const navItems = [
   { href: '/analytics', label: 'Analytics & Stats', icon: '📈' },
   { href: '/metering', label: 'Metering', icon: '💰' },
   { href: '/logs', label: 'Audit Trail', icon: '📋' },
+  { href: '/team', label: 'Team', icon: '👥' },
+  { href: '/demo', label: 'Demo', icon: '🎭' },
   { href: '/guide', label: 'User Guide', icon: '📖' },
 ];
 
-export default function Sidebar({ userEmail }: { userEmail: string }) {
+export default function Sidebar({ userEmail, role }: { userEmail: string; role: 'admin' | 'user' }) {
   const pathname = usePathname();
 
   const handleLogout = async () => {
@@ -72,6 +74,7 @@ export default function Sidebar({ userEmail }: { userEmail: string }) {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-xs font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>{userEmail}</p>
+            <span className={`badge text-[9px] px-1.5 py-0 mt-0.5 ${role === 'admin' ? 'badge-purple' : 'badge-blue'}`}>{role}</span>
           </div>
         </div>
         <button

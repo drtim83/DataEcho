@@ -12,9 +12,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
     redirect('/login');
   }
 
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+
   return (
     <div className="min-h-screen" style={{ background: 'var(--color-bg-primary)' }}>
-      <Sidebar userEmail={user.email ?? ''} />
+      <Sidebar userEmail={user.email ?? ''} role={profile?.role ?? 'user'} />
       <main className="ml-[240px] min-h-screen page-enter">
         {children}
       </main>

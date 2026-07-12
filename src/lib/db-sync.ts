@@ -39,6 +39,7 @@ async function extractPostgres(input: DbTestInput, table: string, columns: strin
   const client = new Client({
     host: input.host, port: input.port || 5432, database: input.database,
     user: input.username, password: input.password, connectionTimeoutMillis: TIMEOUT_MS,
+    ssl: input.type === 'supabase' ? { rejectUnauthorized: false } : undefined,
   });
   try {
     await client.connect();
@@ -68,7 +69,8 @@ async function extractMysql(input: DbTestInput, table: string, columns: string[]
 export async function extractRows(input: DbTestInput, table: string, columns: string[]): Promise<Record<string, unknown>[]> {
   switch (input.type) {
     case 'mssql': return extractMssql(input, table, columns);
-    case 'postgresql': return extractPostgres(input, table, columns);
+    case 'postgresql':
+    case 'supabase': return extractPostgres(input, table, columns);
     case 'mysql': return extractMysql(input, table, columns);
     default: throw new Error(`Data extraction for ${input.type} is not implemented yet.`);
   }
@@ -107,6 +109,7 @@ async function insertPostgres(input: DbTestInput, table: string, columns: string
   const client = new Client({
     host: input.host, port: input.port || 5432, database: input.database,
     user: input.username, password: input.password, connectionTimeoutMillis: TIMEOUT_MS,
+    ssl: input.type === 'supabase' ? { rejectUnauthorized: false } : undefined,
   });
   try {
     await client.connect();
@@ -148,7 +151,8 @@ async function insertMysql(input: DbTestInput, table: string, columns: string[],
 export async function insertRows(input: DbTestInput, table: string, columns: string[], rows: Record<string, unknown>[]): Promise<number> {
   switch (input.type) {
     case 'mssql': return insertMssql(input, table, columns, rows);
-    case 'postgresql': return insertPostgres(input, table, columns, rows);
+    case 'postgresql':
+    case 'supabase': return insertPostgres(input, table, columns, rows);
     case 'mysql': return insertMysql(input, table, columns, rows);
     default: throw new Error(`Data loading for ${input.type} is not implemented yet.`);
   }
@@ -158,6 +162,67 @@ export interface SyncResult {
   recordsExtracted: number;
   recordsLoaded: number;
   bytesTransferred: number;
+}
+
+const PREVIEW_ROWS = 25;
+
+async function previewMssql(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
+  const sql = (await import('mssql')).default;
+  const safeTable = sanitizeIdentifier(table).map((p) => `[${p}]`).join('.');
+  const pool = new sql.ConnectionPool({
+    server: input.host, port: input.port || 1433, database: input.database,
+    user: input.username, password: input.password, connectionTimeout: TIMEOUT_MS,
+    options: { encrypt: true, trustServerCertificate: true },
+  });
+  try {
+    await pool.connect();
+    const result = await pool.request().query(`SELECT TOP (${PREVIEW_ROWS}) * FROM ${safeTable}`);
+    return result.recordset;
+  } finally {
+    await pool.close().catch(() => {});
+  }
+}
+
+async function previewPostgres(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
+  const { Client } = await import('pg');
+  const safeTable = sanitizeIdentifier(table).map((p) => `"${p}"`).join('.');
+  const client = new Client({
+    host: input.host, port: input.port || 5432, database: input.database,
+    user: input.username, password: input.password, connectionTimeoutMillis: TIMEOUT_MS,
+    ssl: input.type === 'supabase' ? { rejectUnauthorized: false } : undefined,
+  });
+  try {
+    await client.connect();
+    const result = await client.query(`SELECT * FROM ${safeTable} LIMIT ${PREVIEW_ROWS}`);
+    return result.rows;
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
+async function previewMysql(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
+  const mysql = await import('mysql2/promise');
+  const safeTable = sanitizeIdentifier(table).map((p) => `\`${p}\``).join('.');
+  const connection = await mysql.createConnection({
+    host: input.host, port: input.port || 3306, database: input.database,
+    user: input.username, password: input.password, connectTimeout: TIMEOUT_MS,
+  });
+  try {
+    const [rows] = await connection.query(`SELECT * FROM ${safeTable} LIMIT ${PREVIEW_ROWS}`);
+    return rows as Record<string, unknown>[];
+  } finally {
+    await connection.end().catch(() => {});
+  }
+}
+
+export async function previewTable(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
+  switch (input.type) {
+    case 'mssql': return previewMssql(input, table);
+    case 'postgresql':
+    case 'supabase': return previewPostgres(input, table);
+    case 'mysql': return previewMysql(input, table);
+    default: throw new Error(`Data preview for ${input.type} is not implemented yet.`);
+  }
 }
 
 export async function runSync(

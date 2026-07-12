@@ -36,6 +36,16 @@ export async function requireUser() {
   return { supabase, user };
 }
 
+// For routes restricted to admins (connector management). Returns `admin: false`
+// rather than throwing so callers can return a clean 403 with context.
+export async function requireAdmin() {
+  const { supabase, user } = await requireUser();
+  if (!user) return { supabase, user, admin: false };
+
+  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+  return { supabase, user, admin: profile?.role === 'admin' };
+}
+
 // Supabase's PostgrestError (and other thrown API errors) aren't `instanceof Error`,
 // so a plain `error instanceof Error` check silently drops the real message.
 export function errorMessage(error: unknown, fallback: string): string {

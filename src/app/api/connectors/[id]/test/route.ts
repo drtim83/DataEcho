@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireUser, errorMessage } from '@/lib/supabase/server';
+import { requireAdmin, errorMessage } from '@/lib/supabase/server';
 import { testConnection } from '@/lib/db-test';
 import { decrypt } from '@/lib/crypto';
 import { logAudit } from '@/lib/audit';
@@ -7,8 +7,9 @@ import type { ConnectorType } from '@/types';
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { supabase, user } = await requireUser();
+    const { supabase, user, admin } = await requireAdmin();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!admin) return NextResponse.json({ error: 'Only admins can manage connectors' }, { status: 403 });
 
     const { id } = await params;
 

@@ -33,6 +33,7 @@ async function listTablesPostgres(input: DbTestInput): Promise<string[]> {
   const client = new Client({
     host: input.host, port: input.port || 5432, database: input.database,
     user: input.username, password: input.password, connectionTimeoutMillis: TIMEOUT_MS,
+    ssl: input.type === 'supabase' ? { rejectUnauthorized: false } : undefined,
   });
   try {
     await client.connect();
@@ -97,6 +98,7 @@ async function getColumnsPostgres(input: DbTestInput, tableName: string): Promis
   const client = new Client({
     host: input.host, port: input.port || 5432, database: input.database,
     user: input.username, password: input.password, connectionTimeoutMillis: TIMEOUT_MS,
+    ssl: input.type === 'supabase' ? { rejectUnauthorized: false } : undefined,
   });
   try {
     await client.connect();
@@ -134,7 +136,8 @@ async function getColumnsMysql(input: DbTestInput, tableName: string): Promise<C
 export async function listTables(input: DbTestInput): Promise<string[]> {
   switch (input.type) {
     case 'mssql': return listTablesMssql(input);
-    case 'postgresql': return listTablesPostgres(input);
+    case 'postgresql':
+    case 'supabase': return listTablesPostgres(input);
     case 'mysql': return listTablesMysql(input);
     default: throw new Error(`Schema introspection for ${input.type} is not implemented yet.`);
   }
@@ -143,7 +146,8 @@ export async function listTables(input: DbTestInput): Promise<string[]> {
 export async function getColumns(input: DbTestInput, tableName: string): Promise<ColumnInfo[]> {
   switch (input.type) {
     case 'mssql': return getColumnsMssql(input, tableName);
-    case 'postgresql': return getColumnsPostgres(input, tableName);
+    case 'postgresql':
+    case 'supabase': return getColumnsPostgres(input, tableName);
     case 'mysql': return getColumnsMysql(input, tableName);
     default: throw new Error(`Schema introspection for ${input.type} is not implemented yet.`);
   }

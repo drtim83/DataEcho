@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import TopBar from '@/components/layout/TopBar';
 import { formatNumber, formatBytes, getDirectionLabel, getDirectionColor } from '@/lib/utils';
 import { RATE_CARD } from '@/lib/pricing';
+import AddPaymentMethodModal from '@/components/billing/AddPaymentMethodModal';
 
 interface MeteringSummary {
   total_cost: number; total_records: number; total_bytes: number;
@@ -11,12 +12,31 @@ interface MeteringSummary {
 }
 interface DailyCost { date: string; cloud: number; onPrem: number; bi: number; }
 interface PipelineCost { pipeline_id: string; pipeline_name: string; direction?: string; records: number; bytes: number; compute_ms: number; cost: number; }
+type BillingInfo = { card_brand: string; card_last4: string; card_exp_month: number; card_exp_year: number } | null;
+type UpcomingInvoice = {
+  currency: string;
+  amount_due: number;
+  period_start: number;
+  period_end: number;
+  lines: { description: string | null; amount: number; quantity: number | null }[];
+} | null;
 
 export default function MeteringPage() {
   const [summary, setSummary] = useState<MeteringSummary | null>(null);
   const [dailyCosts, setDailyCosts] = useState<DailyCost[]>([]);
   const [pipelineCosts, setPipelineCosts] = useState<PipelineCost[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [billing, setBilling] = useState<BillingInfo>(null);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [upcomingInvoice, setUpcomingInvoice] = useState<UpcomingInvoice>(null);
+  const [invoiceLoading, setInvoiceLoading] = useState(true);
+
+  function loadBilling() {
+    fetch('/api/billing/status').then((r) => r.json()).then((data) => setBilling(data.billing || null));
+    setInvoiceLoading(true);
+    fetch('/api/billing/upcoming-invoice').then((r) => r.json()).then((data) => setUpcomingInvoice(data.invoice || null)).finally(() => setInvoiceLoading(false));
+  }
 
   useEffect(() => {
     fetch('/api/metering').then((r) => r.json()).then((data) => {
@@ -24,6 +44,8 @@ export default function MeteringPage() {
       setDailyCosts(data.daily_costs || []);
       setPipelineCosts(data.pipeline_costs || []);
     }).finally(() => setLoading(false));
+    fetch('/api/profile').then((r) => r.json()).then((data) => setIsAdmin(data.profile?.role === 'admin'));
+    loadBilling();
   }, []);
 
   if (loading || !summary) {
@@ -64,6 +86,65 @@ export default function MeteringPage() {
             <p className="text-2xl font-bold mt-2" style={{ color: 'var(--color-accent-purple)' }}>${summary.bidirectional_cost.toFixed(2)}</p>
             <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>{pct(summary.bidirectional_cost)}% of total</p>
           </div>
+        </div>
+
+        {/* Billing / Payment Method */}
+        <div className="glass-card p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>💳 Payment Method</h3>
+              {billing ? (
+                <p className="text-xs mt-1" style={{ color: 'var(--color-text-secondary)' }}>
+                  {billing.card_brand?.toUpperCase()} •••• {billing.card_last4} — expires {billing.card_exp_month}/{billing.card_exp_year}
+                </p>
+              ) : (
+                <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>No payment method on file.</p>
+              )}
+            </div>
+            {isAdmin ? (
+              <button className="btn-secondary text-xs" onClick={() => setShowPaymentModal(true)}>
+                {billing ? 'Update Payment Method' : '+ Add Payment Method'}
+              </button>
+            ) : (
+              <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>Only admins can manage billing.</span>
+            )}
+          </div>
+        </div>
+
+        {showPaymentModal && (
+          <AddPaymentMethodModal
+            onClose={() => setShowPaymentModal(false)}
+            onSuccess={() => { setShowPaymentModal(false); loadBilling(); }}
+          />
+        )}
+
+        {/* Upcoming Invoice */}
+        <div className="glass-card p-5">
+          <h3 className="text-sm font-semibold mb-1" style={{ color: 'var(--color-text-primary)' }}>🧾 Upcoming Invoice</h3>
+          {invoiceLoading ? (
+            <p className="text-xs mt-2" style={{ color: 'var(--color-text-muted)' }}>Loading…</p>
+          ) : !upcomingInvoice ? (
+            <p className="text-xs mt-2" style={{ color: 'var(--color-text-muted)' }}>
+              {billing ? 'No active subscription yet.' : 'Add a payment method to start a subscription.'}
+            </p>
+          ) : (
+            <>
+              <p className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
+                Live projection from Stripe for the period {new Date(upcomingInvoice.period_start * 1000).toLocaleDateString()} – {new Date(upcomingInvoice.period_end * 1000).toLocaleDateString()}
+              </p>
+              <p className="text-3xl font-bold mt-3" style={{ color: 'var(--color-text-primary)' }}>
+                ${(upcomingInvoice.amount_due / 100).toFixed(2)} <span className="text-sm font-normal" style={{ color: 'var(--color-text-muted)' }}>{upcomingInvoice.currency.toUpperCase()}</span>
+              </p>
+              <div className="mt-4 space-y-2">
+                {upcomingInvoice.lines.map((line, i) => (
+                  <div key={i} className="flex items-center justify-between text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+                    <span>{line.description ?? 'Line item'}{line.quantity != null ? ` × ${line.quantity}` : ''}</span>
+                    <span className="font-medium" style={{ color: 'var(--color-text-primary)' }}>${(line.amount / 100).toFixed(2)}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Cost Over Time Chart */}

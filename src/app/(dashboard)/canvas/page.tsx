@@ -18,6 +18,8 @@ import {
   BackgroundVariant,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
+import { useSearchParams } from 'next/navigation';
+import { Suspense } from 'react';
 import TopBar from '@/components/layout/TopBar';
 import { getConnectorIcon, getConnectorLabel } from '@/lib/utils';
 import type { Connector, Pipeline, PipelineDirection } from '@/types';
@@ -138,6 +140,17 @@ interface NewPipelineForm {
 const emptyForm: NewPipelineForm = { name: '', source_connector_id: '', target_connector_id: '', source_table: '', target_table: '', direction: 'cloud_bound' };
 
 export default function CanvasPage() {
+  return (
+    <Suspense fallback={null}>
+      <CanvasPageInner />
+    </Suspense>
+  );
+}
+
+function CanvasPageInner() {
+  const searchParams = useSearchParams();
+  const deepLinkPipelineId = searchParams.get('pipeline');
+
   const [pipelines, setPipelines] = useState<(Pipeline & { source_table?: string; target_table?: string })[]>([]);
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [selectedId, setSelectedId] = useState<string>('');
@@ -163,7 +176,12 @@ export default function CanvasPage() {
       const cData = await cRes.json();
       setPipelines(pData.pipelines || []);
       setConnectors(cData.connectors || []);
-      if (!selectedId && pData.pipelines?.length > 0) setSelectedId(pData.pipelines[0].id);
+      if (!selectedId) {
+        const preferred = deepLinkPipelineId && pData.pipelines?.some((p: Pipeline) => p.id === deepLinkPipelineId)
+          ? deepLinkPipelineId
+          : pData.pipelines?.[0]?.id;
+        if (preferred) setSelectedId(preferred);
+      }
     } finally {
       setLoading(false);
     }

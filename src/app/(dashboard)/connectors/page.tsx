@@ -12,6 +12,7 @@ const CONNECTOR_TYPES: { value: ConnectorType; label: string; category: Connecto
   { value: 'db2', label: 'IBM DB2', category: 'on_prem' },
   { value: 'postgresql', label: 'PostgreSQL', category: 'on_prem' },
   { value: 'mysql', label: 'MySQL', category: 'on_prem' },
+  { value: 'supabase', label: 'Supabase', category: 'cloud' },
   { value: 'snowflake', label: 'Snowflake', category: 'cloud' },
   { value: 'databricks', label: 'Databricks', category: 'cloud' },
   { value: 'iceberg', label: 'Apache Iceberg', category: 'cloud' },
@@ -23,6 +24,7 @@ const DEFAULT_PORTS: Partial<Record<ConnectorType, number>> = {
   mysql: 3306,
   oracle: 1521,
   db2: 50000,
+  supabase: 5432,
 };
 
 interface FormState {
@@ -55,6 +57,14 @@ export default function ConnectorsPage() {
   const [testState, setTestState] = useState<{ status: 'idle' | 'testing' | 'success' | 'error'; message: string }>({ status: 'idle', message: '' });
   const [saving, setSaving] = useState(false);
   const [retestingId, setRetestingId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  const [previewConnector, setPreviewConnector] = useState<Connector | null>(null);
+  const [previewTables, setPreviewTables] = useState<string[]>([]);
+  const [previewTable, setPreviewTable] = useState('');
+  const [previewData, setPreviewData] = useState<{ columns: string[]; rows: Record<string, unknown>[] } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState('');
 
   async function loadConnectors() {
     setLoading(true);
@@ -73,6 +83,7 @@ export default function ConnectorsPage() {
 
   useEffect(() => {
     loadConnectors();
+    fetch('/api/profile').then((r) => r.json()).then((data) => setIsAdmin(data.profile?.role === 'admin'));
   }, []);
 
   const filtered = filter === 'all' ? connectors : connectors.filter(c => c.category === filter);
@@ -172,6 +183,47 @@ export default function ConnectorsPage() {
     }
   }
 
+  async function openPreview(connector: Connector) {
+    setPreviewConnector(connector);
+    setPreviewTable('');
+    setPreviewData(null);
+    setPreviewError('');
+    try {
+      const res = await fetch(`/api/schema/tables?connector_id=${connector.id}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to list tables');
+      setPreviewTables(data.tables || []);
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : 'Failed to list tables');
+    }
+  }
+
+  async function loadPreviewTable(table: string) {
+    if (!previewConnector) return;
+    setPreviewTable(table);
+    setPreviewData(null);
+    setPreviewError('');
+    setPreviewLoading(true);
+    try {
+      const res = await fetch(`/api/schema/preview?connector_id=${previewConnector.id}&table=${encodeURIComponent(table)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to load preview');
+      setPreviewData(data);
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : 'Failed to load preview');
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  function closePreview() {
+    setPreviewConnector(null);
+    setPreviewTables([]);
+    setPreviewTable('');
+    setPreviewData(null);
+    setPreviewError('');
+  }
+
   return (
     <>
       <TopBar title="Connector Hub" subtitle="Manage data source and target connections" />
@@ -194,10 +246,18 @@ export default function ConnectorsPage() {
               </button>
             ))}
           </div>
-          <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2 cursor-pointer">
-            <span>+</span> Add Connector
-          </button>
+          {isAdmin && (
+            <button onClick={() => setShowModal(true)} className="btn-primary flex items-center gap-2 cursor-pointer">
+              <span>+</span> Add Connector
+            </button>
+          )}
         </div>
+
+        {!loading && !isAdmin && (
+          <div className="text-xs py-2 px-4 rounded-lg" style={{ background: 'rgba(59, 130, 246, 0.06)', color: 'var(--color-accent-blue)' }}>
+            You can view connectors, but only admins can add, test, or delete them.
+          </div>
+        )}
 
         {error && (
           <div className="text-sm py-2 px-4 rounded-lg" style={{ background: 'rgba(239, 68, 68, 0.1)', color: 'var(--color-accent-coral)' }}>
@@ -256,20 +316,31 @@ export default function ConnectorsPage() {
                   </span>
                   <div className="flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
-                      onClick={() => handleRetest(connector.id)}
-                      disabled={retestingId === connector.id}
-                      className="text-[10px] cursor-pointer disabled:opacity-50"
-                      style={{ color: 'var(--color-accent-blue)' }}
-                    >
-                      {retestingId === connector.id ? 'Testing…' : 'Test'}
-                    </button>
-                    <button
-                      onClick={() => handleDelete(connector.id)}
+                      onClick={() => openPreview(connector)}
                       className="text-[10px] cursor-pointer"
-                      style={{ color: 'var(--color-accent-coral)' }}
+                      style={{ color: 'var(--color-accent-teal)' }}
                     >
-                      Delete
+                      Preview
                     </button>
+                    {isAdmin && (
+                      <>
+                        <button
+                          onClick={() => handleRetest(connector.id)}
+                          disabled={retestingId === connector.id}
+                          className="text-[10px] cursor-pointer disabled:opacity-50"
+                          style={{ color: 'var(--color-accent-blue)' }}
+                        >
+                          {retestingId === connector.id ? 'Testing…' : 'Test'}
+                        </button>
+                        <button
+                          onClick={() => handleDelete(connector.id)}
+                          className="text-[10px] cursor-pointer"
+                          style={{ color: 'var(--color-accent-coral)' }}
+                        >
+                          Delete
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -409,6 +480,73 @@ export default function ConnectorsPage() {
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Preview Modal */}
+        {previewConnector && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.6)' }}>
+            <div className="glass-strong rounded-2xl p-6 w-full max-w-3xl animate-fade-in-scale">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h3 className="text-lg font-semibold" style={{ color: 'var(--color-text-primary)' }}>{previewConnector.name}</h3>
+                  <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>Table structure &amp; data preview</p>
+                </div>
+                <button onClick={closePreview} className="text-lg cursor-pointer" style={{ color: 'var(--color-text-muted)' }}>✕</button>
+              </div>
+
+              <div className="mb-4">
+                <label className="block text-xs font-medium mb-1.5 uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Table</label>
+                <select
+                  className="input-field"
+                  style={{ background: 'var(--color-bg-primary)' }}
+                  value={previewTable}
+                  onChange={(e) => loadPreviewTable(e.target.value)}
+                  disabled={previewTables.length === 0}
+                >
+                  <option value="">{previewTables.length === 0 ? 'No tables found' : 'Select a table…'}</option>
+                  {previewTables.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+
+              {previewError && (
+                <div className="text-sm py-2 px-4 rounded-lg mb-4" style={{ background: 'rgba(239, 68, 68, 0.1)', color: 'var(--color-accent-coral)' }}>
+                  {previewError}
+                </div>
+              )}
+
+              {previewLoading ? (
+                <p className="text-sm text-center py-8" style={{ color: 'var(--color-text-muted)' }}>Loading preview…</p>
+              ) : previewData ? (
+                <div className="overflow-auto rounded-xl" style={{ maxHeight: '400px', border: '1px solid var(--color-border-subtle)' }}>
+                  <table className="w-full">
+                    <thead style={{ position: 'sticky', top: 0, background: 'var(--color-bg-elevated)' }}>
+                      <tr>
+                        {previewData.columns.map((c) => (
+                          <th key={c} className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap" style={{ color: 'var(--color-text-muted)' }}>{c}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {previewData.rows.map((row, i) => (
+                        <tr key={i} style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
+                          {previewData.columns.map((c) => (
+                            <td key={c} className="px-3 py-2 text-xs font-mono whitespace-nowrap" style={{ color: 'var(--color-text-secondary)' }}>
+                              {row[c] === null || row[c] === undefined ? <span style={{ color: 'var(--color-text-muted)' }}>null</span> : String(row[c])}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                      {previewData.rows.length === 0 && (
+                        <tr><td colSpan={previewData.columns.length || 1} className="px-3 py-6 text-center text-xs" style={{ color: 'var(--color-text-muted)' }}>Table is empty.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-sm text-center py-8" style={{ color: 'var(--color-text-muted)' }}>Select a table to preview its structure and first 25 rows.</p>
+              )}
             </div>
           </div>
         )}

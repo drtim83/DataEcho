@@ -3,7 +3,7 @@
 // ============================================================
 
 export type ConnectorCategory = 'on_prem' | 'cloud' | 'saas';
-export type ConnectorType = 'mssql' | 'oracle' | 'db2' | 'postgresql' | 'mysql' | 'snowflake' | 'databricks' | 'iceberg' | 'salesforce' | 'hubspot' | 'stripe';
+export type ConnectorType = 'mssql' | 'oracle' | 'db2' | 'postgresql' | 'mysql' | 'supabase' | 'snowflake' | 'databricks' | 'iceberg' | 'salesforce' | 'hubspot' | 'stripe';
 export type ConnectorStatus = 'connected' | 'error' | 'disconnected' | 'configuring';
 
 export interface Connector {

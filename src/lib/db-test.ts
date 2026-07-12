@@ -55,6 +55,8 @@ async function testPostgres(input: DbTestInput): Promise<DbTestResult> {
     user: input.username,
     password: input.password,
     connectionTimeoutMillis: TIMEOUT_MS,
+    // Supabase's hosted Postgres always requires SSL; plain on-prem Postgres usually doesn't.
+    ssl: input.type === 'supabase' ? { rejectUnauthorized: false } : undefined,
   });
   try {
     await withTimeout(client.connect(), TIMEOUT_MS);
@@ -107,6 +109,7 @@ export async function testConnection(input: DbTestInput): Promise<DbTestResult> 
         result = await testMssql(input);
         break;
       case 'postgresql':
+      case 'supabase':
         result = await testPostgres(input);
         break;
       case 'mysql':

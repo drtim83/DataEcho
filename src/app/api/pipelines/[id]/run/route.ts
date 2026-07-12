@@ -3,6 +3,7 @@ import { requireUser, errorMessage } from '@/lib/supabase/server';
 import { getConnectorConnectionInput } from '@/lib/connector-helpers';
 import { runSync, MAX_SYNC_ROWS } from '@/lib/db-sync';
 import { computeCost } from '@/lib/pricing';
+import { reportUsage } from '@/lib/billing-helpers';
 import { logAudit } from '@/lib/audit';
 import type { ColumnMapping } from '@/lib/schema-mapper';
 
@@ -83,6 +84,8 @@ export async function POST(_req: Request, { params }: { params: Promise<{ id: st
         cost_usd: cost,
       });
       if (meteringError) console.error('Failed to write metering event:', meteringError);
+
+      await reportUsage(supabase, syncResult.bytesTransferred);
     }
 
     await logAudit(supabase, {

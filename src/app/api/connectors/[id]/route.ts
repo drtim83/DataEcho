@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server';
-import { requireUser, errorMessage } from '@/lib/supabase/server';
+import { requireAdmin, errorMessage } from '@/lib/supabase/server';
 import { logAudit } from '@/lib/audit';
+import { syncConnectorQuantity } from '@/lib/billing-helpers';
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { supabase, user } = await requireUser();
+    const { supabase, user, admin } = await requireAdmin();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!admin) return NextResponse.json({ error: 'Only admins can manage connectors' }, { status: 403 });
 
     const { id } = await params;
 
@@ -20,6 +22,8 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
       status: 'success',
       details: existing?.name ? `Deleted connector "${existing.name}"` : `Deleted connector ${id}`,
     });
+
+    await syncConnectorQuantity(supabase);
 
     return NextResponse.json({ success: true });
   } catch (error) {

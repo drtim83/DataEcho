@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server';
-import { requireUser, errorMessage } from '@/lib/supabase/server';
+import { requireAdmin, errorMessage } from '@/lib/supabase/server';
 import { testConnection } from '@/lib/db-test';
 import type { ConnectorType } from '@/types';
 
 export async function POST(req: Request) {
   try {
-    const { user } = await requireUser();
+    const { user, admin } = await requireAdmin();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!admin) return NextResponse.json({ error: 'Only admins can manage connectors' }, { status: 403 });
 
     const body = await req.json();
     const { type, host, port, database, username, password } = body;
