@@ -1,7 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useMemo } from 'react';
+import { createClient } from '@/lib/supabase/client';
+
+const PARTICLE_COLORS = ['var(--color-accent-blue)', 'var(--color-accent-teal)', 'var(--color-accent-purple)'];
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -10,33 +12,38 @@ export default function LoginPage() {
   const [shaking, setShaking] = useState(false);
   const [loading, setLoading] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const router = useRouter();
+
+  const particles = useMemo(() => Array.from({ length: 20 }, (_, i) => ({
+    size: 2 + Math.random() * 4,
+    left: Math.random() * 100,
+    top: Math.random() * 100,
+    color: PARTICLE_COLORS[i % 3],
+    opacity: 0.3 + Math.random() * 0.4,
+    delay: Math.random() * 3,
+    duration: 3 + Math.random() * 4,
+  })), []);
 
   useEffect(() => {
     setMounted(true);
-    // Check if already logged in
-    if (typeof window !== 'undefined' && localStorage.getItem('dataecho_auth') === 'true') {
-      router.push('/');
-    }
-  }, [router]);
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
 
-    // Simulate network delay
-    await new Promise(r => setTimeout(r, 800));
+    const supabase = createClient();
+    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
 
-    if (email === 'admin@dataecho.app' && password === 'admin') {
-      localStorage.setItem('dataecho_auth', 'true');
-      router.push('/');
-    } else {
-      setError('Invalid credentials');
+    if (signInError) {
+      setError(signInError.message);
       setShaking(true);
       setTimeout(() => setShaking(false), 500);
+      setLoading(false);
+    } else {
+      // Full reload so the proxy/server components pick up the new session cookie.
+      window.location.href = '/';
     }
-    setLoading(false);
   };
 
   return (
@@ -53,19 +60,19 @@ export default function LoginPage() {
           }} />
 
         {/* Floating particles */}
-        {mounted && Array.from({ length: 20 }).map((_, i) => (
+        {mounted && particles.map((p, i) => (
           <div
             key={i}
             className="absolute rounded-full animate-float"
             style={{
-              width: `${2 + Math.random() * 4}px`,
-              height: `${2 + Math.random() * 4}px`,
-              left: `${Math.random() * 100}%`,
-              top: `${Math.random() * 100}%`,
-              background: ['var(--color-accent-blue)', 'var(--color-accent-teal)', 'var(--color-accent-purple)'][i % 3],
-              opacity: 0.3 + Math.random() * 0.4,
-              animationDelay: `${Math.random() * 3}s`,
-              animationDuration: `${3 + Math.random() * 4}s`,
+              width: `${p.size}px`,
+              height: `${p.size}px`,
+              left: `${p.left}%`,
+              top: `${p.top}%`,
+              background: p.color,
+              opacity: p.opacity,
+              animationDelay: `${p.delay}s`,
+              animationDuration: `${p.duration}s`,
             }}
           />
         ))}
@@ -105,7 +112,7 @@ export default function LoginPage() {
               type="text"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="admin@dataecho.app"
+              placeholder="you@company.com"
               className="input-field"
               autoFocus
             />
@@ -150,13 +157,6 @@ export default function LoginPage() {
             ) : 'Sign In'}
           </button>
         </form>
-
-        {/* Demo hint */}
-        <div className="mt-6 text-center">
-          <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-            Demo credentials: <span style={{ color: 'var(--color-text-secondary)' }}>admin@dataecho.app</span> / <span style={{ color: 'var(--color-text-secondary)' }}>admin</span>
-          </p>
-        </div>
 
         {/* Features */}
         <div className="mt-8 pt-6 grid grid-cols-3 gap-4 text-center" style={{ borderTop: '1px solid var(--color-border-subtle)' }}>

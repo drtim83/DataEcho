@@ -1,7 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
 
 const navItems = [
   { href: '/', label: 'Command Center', icon: '📊' },
@@ -16,13 +17,14 @@ const navItems = [
   { href: '/guide', label: 'User Guide', icon: '📖' },
 ];
 
-export default function Sidebar() {
+export default function Sidebar({ userEmail }: { userEmail: string }) {
   const pathname = usePathname();
-  const router = useRouter();
 
-  const handleLogout = () => {
-    localStorage.removeItem('dataecho_auth');
-    router.push('/login');
+  const handleLogout = async () => {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    // Full reload so the proxy sees the cleared session cookie.
+    window.location.href = '/login';
   };
 
   return (
@@ -66,11 +68,10 @@ export default function Sidebar() {
         <div className="flex items-center gap-3 px-3 mb-2">
           <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold"
             style={{ background: 'linear-gradient(135deg, var(--color-accent-purple), var(--color-accent-blue))' }}>
-            A
+            {userEmail.charAt(0).toUpperCase() || '?'}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-xs font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>Admin</p>
-            <p className="text-[10px] truncate" style={{ color: 'var(--color-text-muted)' }}>admin@dataecho.app</p>
+            <p className="text-xs font-medium truncate" style={{ color: 'var(--color-text-primary)' }}>{userEmail}</p>
           </div>
         </div>
         <button

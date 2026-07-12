@@ -1,26 +1,35 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import TopBar from '@/components/layout/TopBar';
 import StatusBadge from '@/components/shared/StatusBadge';
-import { mockAuditLogs } from '@/lib/mock-data';
 import { formatDateTime, getDirectionLabel, getDirectionColor } from '@/lib/utils';
+import type { AuditLog } from '@/types';
 
 export default function LogsPage() {
+  const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedLog, setSelectedLog] = useState<string | null>(null);
 
-  const filtered = mockAuditLogs.filter(log => {
+  useEffect(() => {
+    fetch('/api/audit-logs')
+      .then((r) => r.json())
+      .then((data) => setLogs(data.logs || []))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const filtered = logs.filter((log) => {
     const matchesSearch = search === '' ||
       log.action.toLowerCase().includes(search.toLowerCase()) ||
       log.pipeline_name?.toLowerCase().includes(search.toLowerCase()) ||
-      log.details.toLowerCase().includes(search.toLowerCase());
+      log.details?.toLowerCase().includes(search.toLowerCase());
     const matchesStatus = statusFilter === 'all' || log.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
-  const selectedLogData = mockAuditLogs.find(l => l.id === selectedLog);
+  const selectedLogData = logs.find((l) => l.id === selectedLog);
 
   return (
     <>
@@ -41,7 +50,7 @@ export default function LogsPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            {['all', 'success', 'error', 'warning', 'info'].map(s => (
+            {['all', 'success', 'error', 'warning', 'info'].map((s) => (
               <button
                 key={s}
                 onClick={() => setStatusFilter(s)}
@@ -55,10 +64,6 @@ export default function LogsPage() {
               </button>
             ))}
           </div>
-
-          <button className="btn-secondary text-xs flex items-center gap-1.5">
-            📥 Export CSV
-          </button>
         </div>
 
         {/* Logs Table */}
@@ -66,13 +71,13 @@ export default function LogsPage() {
           <table className="w-full">
             <thead>
               <tr style={{ borderBottom: '1px solid var(--color-border-subtle)' }}>
-                {['Timestamp', 'Pipeline', 'Action', 'Direction', 'Status', 'Actor', 'Records', ''].map(h => (
+                {['Timestamp', 'Pipeline', 'Action', 'Direction', 'Status', 'Actor', 'Records', ''].map((h) => (
                   <th key={h} className="px-4 py-3 text-left text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {filtered.map(log => (
+              {filtered.map((log) => (
                 <tr
                   key={log.id}
                   className="table-row cursor-pointer"
@@ -102,6 +107,9 @@ export default function LogsPage() {
                   </td>
                 </tr>
               ))}
+              {!loading && filtered.length === 0 && (
+                <tr><td colSpan={8} className="px-4 py-6 text-center text-xs" style={{ color: 'var(--color-text-muted)' }}>No audit events yet.</td></tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -111,7 +119,7 @@ export default function LogsPage() {
           <div className="glass-card p-5 animate-fade-in">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-sm font-semibold" style={{ color: 'var(--color-text-primary)' }}>Log Detail</h3>
-              <button onClick={() => setSelectedLog(null)} className="text-sm" style={{ color: 'var(--color-text-muted)' }}>✕</button>
+              <button onClick={() => setSelectedLog(null)} className="text-sm cursor-pointer" style={{ color: 'var(--color-text-muted)' }}>✕</button>
             </div>
             <div className="grid grid-cols-2 gap-4">
               {[
@@ -123,30 +131,32 @@ export default function LogsPage() {
                 { label: 'Status', value: selectedLogData.status },
                 { label: 'Direction', value: selectedLogData.direction ? getDirectionLabel(selectedLogData.direction) : 'N/A' },
                 { label: 'Records Affected', value: selectedLogData.records_affected?.toLocaleString() || 'N/A' },
-              ].map(field => (
+              ].map((field) => (
                 <div key={field.label}>
                   <p className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>{field.label}</p>
                   <p className="text-sm mt-0.5 font-mono" style={{ color: 'var(--color-text-primary)' }}>{field.value}</p>
                 </div>
               ))}
             </div>
-            <div className="mt-4 pt-4" style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
-              <p className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'var(--color-text-muted)' }}>Details</p>
-              <p className="text-sm font-mono p-3 rounded-lg" style={{ background: 'var(--color-bg-primary)', color: 'var(--color-text-secondary)' }}>
-                {selectedLogData.details}
-              </p>
-            </div>
+            {selectedLogData.details && (
+              <div className="mt-4 pt-4" style={{ borderTop: '1px solid var(--color-border-subtle)' }}>
+                <p className="text-[10px] uppercase tracking-wider mb-1" style={{ color: 'var(--color-text-muted)' }}>Details</p>
+                <p className="text-sm font-mono p-3 rounded-lg" style={{ background: 'var(--color-bg-primary)', color: 'var(--color-text-secondary)' }}>
+                  {selectedLogData.details}
+                </p>
+              </div>
+            )}
           </div>
         )}
 
         {/* Summary Stats */}
         <div className="grid grid-cols-4 gap-4">
           {[
-            { label: 'Total Events', value: mockAuditLogs.length, color: 'var(--color-accent-blue)' },
-            { label: 'Successes', value: mockAuditLogs.filter(l => l.status === 'success').length, color: 'var(--color-accent-teal)' },
-            { label: 'Errors', value: mockAuditLogs.filter(l => l.status === 'error').length, color: 'var(--color-accent-coral)' },
-            { label: 'Warnings', value: mockAuditLogs.filter(l => l.status === 'warning').length, color: 'var(--color-accent-amber)' },
-          ].map(s => (
+            { label: 'Total Events', value: logs.length, color: 'var(--color-accent-blue)' },
+            { label: 'Successes', value: logs.filter((l) => l.status === 'success').length, color: 'var(--color-accent-teal)' },
+            { label: 'Errors', value: logs.filter((l) => l.status === 'error').length, color: 'var(--color-accent-coral)' },
+            { label: 'Warnings', value: logs.filter((l) => l.status === 'warning').length, color: 'var(--color-accent-amber)' },
+          ].map((s) => (
             <div key={s.label} className="glass-card p-4 text-center">
               <p className="text-2xl font-bold" style={{ color: s.color }}>{s.value}</p>
               <p className="text-[10px] mt-1 uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>{s.label}</p>

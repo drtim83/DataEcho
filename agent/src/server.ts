@@ -6,6 +6,17 @@ import sql from "mssql";
 // We keep a simple in-memory pool for the SQL Server connection
 let pool: sql.ConnectionPool | null = null;
 
+// SQL Server doesn't support parameter binding for identifiers (table/column names),
+// so we validate against a strict allowlist and bracket-quote each part before
+// interpolating it into the query string.
+function sanitizeIdentifier(identifier: string): string {
+  const parts = identifier.split('.');
+  if (parts.length > 2 || parts.some((p) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(p))) {
+    throw new Error(`Invalid table name: ${identifier}`);
+  }
+  return parts.map((p) => `[${p}]`).join('.');
+}
+
 export const server = new McpServer({
   name: "dataecho-mssql-agent",
   version: "1.0.0",
@@ -121,10 +132,10 @@ server.tool(
   },
   async ({ connectionString, tableName, limit }) => {
     try {
-      // In a real production app, tableName must be strictly sanitized to prevent SQL injection.
-      // For this prototype, we're assuming trusted input from our own cloud app.
+      const safeTable = sanitizeIdentifier(tableName);
+      const safeLimit = Math.max(1, Math.min(10000, Math.floor(limit)));
       const p = await getPool(connectionString);
-      const result = await p.request().query(`SELECT TOP ${limit} * FROM ${tableName}`);
+      const result = await p.request().query(`SELECT TOP (${safeLimit}) * FROM ${safeTable}`);
       return {
         content: [{ type: "text", text: JSON.stringify(result.recordset, null, 2) }],
       };
