@@ -47,14 +47,17 @@ export async function reportUsage(supabase: SupabaseClient, bytesTransferred: nu
     const eventName = process.env.STRIPE_METER_EVENT_NAME;
     if (!eventName) return;
 
-    const gb = bytesTransferred / BYTES_PER_GB;
+    // Stripe rejects meter event values with more than 12 decimal places,
+    // which a raw bytes/GB division routinely produces for small transfers.
+    const gb = (bytesTransferred / BYTES_PER_GB).toFixed(12);
+    if (Number(gb) <= 0) return;
 
     const stripe = getStripe();
     await stripe.billing.meterEvents.create({
       event_name: eventName,
       payload: {
         stripe_customer_id: billing.stripe_customer_id,
-        value: gb.toString(),
+        value: gb,
       },
     });
   } catch (err) {
