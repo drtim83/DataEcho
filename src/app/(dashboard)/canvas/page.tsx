@@ -157,6 +157,7 @@ function CanvasPageInner() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [runResult, setRunResult] = useState<{ status: 'success' | 'error'; message: string } | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState<NewPipelineForm>(emptyForm);
@@ -268,6 +269,21 @@ function CanvasPageInner() {
     }
   }
 
+  async function handleDelete() {
+    if (!selectedPipeline) return;
+    if (!confirm(`Delete pipeline "${selectedPipeline.name}"? This can't be undone.`)) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/pipelines/${selectedPipeline.id}`, { method: 'DELETE' });
+      if (res.ok) {
+        setSelectedId('');
+        await loadPipelines();
+      }
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   async function loadTablesFor(connectorId: string, which: 'source' | 'target') {
     if (!connectorId) { (which === 'source' ? setSourceTables : setTargetTables)([]); return; }
     const res = await fetch(`/api/schema/tables?connector_id=${connectorId}`);
@@ -305,6 +321,14 @@ function CanvasPageInner() {
         </select>
         <button className="btn-secondary text-xs" onClick={() => setShowModal(true)}>+ New Pipeline</button>
         <div className="ml-auto flex items-center gap-2">
+          <button
+            className="text-xs px-3 py-1.5 rounded-lg disabled:opacity-50"
+            style={{ color: 'var(--color-accent-coral)', border: '1px solid rgba(239, 68, 68, 0.3)' }}
+            onClick={handleDelete}
+            disabled={!selectedPipeline || deleting}
+          >
+            {deleting ? 'Deleting…' : '🗑️ Delete'}
+          </button>
           <button className="btn-secondary text-xs" onClick={handleSave} disabled={!selectedPipeline || saving}>{saving ? 'Saving…' : '💾 Save'}</button>
           <button className="btn-primary text-xs" onClick={handleRun} disabled={!selectedPipeline || running}>{running ? 'Running…' : '▶️ Run'}</button>
         </div>

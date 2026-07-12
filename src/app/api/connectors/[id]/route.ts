@@ -14,7 +14,13 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ id: 
     const { data: existing } = await supabase.from('connectors').select('name').eq('id', id).single();
 
     const { error } = await supabase.from('connectors').delete().eq('id', id);
-    if (error) throw error;
+    if (error) {
+      // Postgres foreign_key_violation — a pipeline still references this connector.
+      if (error.code === '23503') {
+        return NextResponse.json({ error: 'This connector is still used by one or more pipelines. Delete those pipelines first.' }, { status: 409 });
+      }
+      throw error;
+    }
 
     await logAudit(supabase, {
       action: 'connector.delete',
