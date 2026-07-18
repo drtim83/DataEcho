@@ -169,17 +169,37 @@ export async function runSchemaMapping(supabase: SupabaseClient, user: User, pip
     throw new PipelineActionError('Pipeline is missing a source or target table');
   }
 
-  const [sourceConn, targetConn] = await Promise.all([
+  const [sourceConn, targetConn, { data: joinSources }] = await Promise.all([
     getConnectorConnectionInput(supabase, pipeline.source_id),
     getConnectorConnectionInput(supabase, pipeline.target_id),
+    supabase.from('pipeline_sources').select('source_id, source_table').eq('pipeline_id', pipelineId).eq('combine_mode', 'join'),
   ]);
 
-  const [sourceCols, targetCols] = await Promise.all([
+  const [sourceCols, targetCols, joinSourceCols] = await Promise.all([
     getColumns(sourceConn, pipeline.source_table),
     getColumns(targetConn, pipeline.target_table),
+    Promise.all(
+      (joinSources ?? []).map(async (s) => {
+        const conn = await getConnectorConnectionInput(supabase, s.source_id);
+        return getColumns(conn, s.source_table as string);
+      })
+    ).then((cols) => cols.flat()),
   ]);
 
-  const mappings = mapSchemas(sourceCols, targetCols);
+  // Joined sources can contribute columns the primary source doesn't have
+  // (e.g. a joined customers.name); the primary source's own columns take
+  // priority on name conflicts, matching how the sync engine merges rows.
+  const seenNames = new Set(sourceCols.map((c) => c.name));
+  const combinedSourceCols = [
+    ...sourceCols,
+    ...joinSourceCols.filter((c) => {
+      if (seenNames.has(c.name)) return false;
+      seenNames.add(c.name);
+      return true;
+    }),
+  ];
+
+  const mappings = mapSchemas(combinedSourceCols, targetCols);
 
   const { error: delError } = await supabase.from('schema_mappings').delete().eq('pipeline_id', pipelineId);
   if (delError) throw delError;
