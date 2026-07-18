@@ -71,6 +71,7 @@ API calls) — not just typechecked or assumed working, unless noted otherwise.
 - Real usage reporting per sync run (`reportUsage` in `src/lib/billing-helpers.ts`), truncated to 12 decimal places (Stripe's meter-event precision limit — see Known Issues Fixed below).
 - Live "Upcoming Invoice" projection on the Metering page via Stripe's Create Preview Invoice API.
 - **Verified end-to-end live**: card added → subscription created (`sub_1TsQTQ...`) → connector added → subscription item quantity synced to 1 → pipeline run against a real local Postgres → meter event created and confirmed via Stripe's event-summary API (`aggregated_value: 0.000022546388`, exact match) → upcoming invoice reflects it.
+- **Production-only bug found and fixed**: Stripe's default Node `https`-based HTTP client fails every outbound call from Netlify's function runtime (`StripeConnectionError`) — switched to `Stripe.createFetchHttpClient()` in `src/lib/stripe.ts`. Separately, the `STRIPE_SECRET_KEY` value itself got silently corrupted to a length-preserving bullet-masked placeholder on every attempt to set it (via `netlify env:set` twice and the Netlify dashboard once) — a real secret string starting `sk_` appears to get intercepted and redacted by something on the local machine (clipboard/paste-based DLP tooling was the working theory). Routing the value through a shell variable (`source .env.local && netlify env:set STRIPE_SECRET_KEY "$STRIPE_SECRET_KEY"`, never rendering the raw text) rather than a literal pasted argument worked. Confirmed fixed via a temporary diagnostic route (length/prefix/suffix only, never logged the real value) and then live 200s from `/api/billing/setup-intent` and `/api/billing/upcoming-invoice` against production.
 
 ### MCP Server
 - Real Model Context Protocol server (`src/lib/mcp-server.ts`) bridged through `/api/mcp` (`GET` lists tools, `POST` invokes one) using an in-memory MCP client/server transport pair per request.
@@ -92,11 +93,18 @@ API calls) — not just typechecked or assumed working, unless noted otherwise.
 - Pipeline delete had no UI entry point at all (API route existed, unused) — added to Canvas toolbar.
 - Deleting a connector still referenced by a pipeline threw a raw Postgres foreign-key-violation error — now a clear 409 message telling you to delete the pipeline first.
 
-### Pending: migrations not yet run
-Five migrations were written this cycle and need to be run, in order
-(Supabase SQL Editor), before their features work: `009_connector_role.sql`,
-`010_pipeline_sync_mode.sql`, `011_pipeline_sources.sql`,
-`012_pipeline_destinations.sql`, `013_join_and_multi_filter.sql`.
+### Migrations
+All five migrations (`009_connector_role.sql` through
+`013_join_and_multi_filter.sql`) have been run against the live Supabase
+project and verified live.
+
+### Verified This Cycle: MCP, chained joins, MySQL, production billing
+- **MCP tools genuinely hit real infrastructure**: `preview_schema`, `map_schema`, `trigger_sync`, and `get_sync_status` were driven over real HTTP against `/api/mcp` (payload shape is `{ tool, params }`, not `{ tool, args }`), against a real local Postgres table — then the target table's contents were checked directly in Postgres, bypassing the app, confirming the rows genuinely moved.
+- **Chained joins (`A JOIN B JOIN C`, 3 real sources)**: verified live with 3 separate local Postgres databases. Chaining depth works correctly (a join-C match is correctly evaluated against the *post-join-B* row, not the primary row), and LEFT JOIN NULL-propagation is correct at each level.
+- **Real bug found in `mapSchemas` (`src/lib/schema-mapper.ts`) and fixed**: the single-pass greedy matcher is order-dependent — a source column with a weak fuzzy match (e.g. a joined `regions.code`) could claim a target column before a different source column with a perfect exact-name match (`regions.region_name` → target `region_name`) ever got a turn, since it was iterated later. Fixed with a two-pass approach: exact normalized-name matches are resolved first, across every source column, before any fuzzy matching runs. Re-verified live: the correct region name now lands instead of the raw region code.
+- **MySQL connector**: verified live against a real local MySQL 9.7.1 instance — `Test Connection` reported the genuine server version, `preview_schema`/`map_schema`/`trigger_sync` all worked against real MySQL types (`int`/`varchar`/`decimal`), and the target table was confirmed directly in MySQL.
+- **MSSQL connector**: not testable in this environment — SQL Server has no native macOS build and no container runtime (Docker/Colima/Podman) is installed locally. Untested since the original build.
+- **Production Stripe billing**: was completely broken (every call failed) until both fixes above landed. Now confirmed live with real 200 responses from `/api/billing/setup-intent` (real `seti_...` client secret) and `/api/billing/upcoming-invoice` (real proration line items matching local exactly).
 
 ---
 

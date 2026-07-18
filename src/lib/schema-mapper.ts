@@ -51,11 +51,43 @@ function typeCategory(type: string): TypeCategory {
 
 const MIN_CONFIDENCE = 0.35;
 
+function buildMapping(sc: ColumnInfo, tc: ColumnInfo, score: number): ColumnMapping {
+  const typeMatch = typeCategory(sc.type) === typeCategory(tc.type);
+  return {
+    source_col: sc.name,
+    target_col: tc.name,
+    source_type: sc.type,
+    target_type: tc.type,
+    ai_confidence: Math.round(Math.min(0.99, score) * 100) / 100,
+    ai_warning: typeMatch ? undefined : `Type mismatch: source is ${sc.type}, target is ${tc.type}. Verify conversion is safe before running.`,
+  };
+}
+
 export function mapSchemas(sourceCols: ColumnInfo[], targetCols: ColumnInfo[]): ColumnMapping[] {
   const usedTargets = new Set<string>();
   const mappings: ColumnMapping[] = [];
 
+  // Pass 1: exact normalized-name matches, resolved across every source
+  // column before any fuzzy matching happens. Without this pass, a single
+  // greedy left-to-right scan lets a weak fuzzy match claim a target column
+  // before the source column with the actual exact-name match gets a turn
+  // (e.g. a joined source contributing both "code" and "region_name" — if
+  // "code" is iterated first, it can grab a "region_name" target on a weak
+  // 0.4 score before "region_name" itself is even considered).
+  const unmatched: ColumnInfo[] = [];
   for (const sc of sourceCols) {
+    const exact = targetCols.find((tc) => !usedTargets.has(tc.name) && normalize(sc.name) === normalize(tc.name));
+    if (exact) {
+      usedTargets.add(exact.name);
+      const typeMatch = typeCategory(sc.type) === typeCategory(exact.type);
+      mappings.push(buildMapping(sc, exact, typeMatch ? 1 : 0.75));
+    } else {
+      unmatched.push(sc);
+    }
+  }
+
+  // Pass 2: greedy best-score fuzzy match for whatever's left.
+  for (const sc of unmatched) {
     let best: { col: ColumnInfo; score: number } | null = null;
     for (const tc of targetCols) {
       if (usedTargets.has(tc.name)) continue;
@@ -67,15 +99,7 @@ export function mapSchemas(sourceCols: ColumnInfo[], targetCols: ColumnInfo[]): 
 
     if (best && best.score > MIN_CONFIDENCE) {
       usedTargets.add(best.col.name);
-      const typeMatch = typeCategory(sc.type) === typeCategory(best.col.type);
-      mappings.push({
-        source_col: sc.name,
-        target_col: best.col.name,
-        source_type: sc.type,
-        target_type: best.col.type,
-        ai_confidence: Math.round(Math.min(0.99, best.score) * 100) / 100,
-        ai_warning: typeMatch ? undefined : `Type mismatch: source is ${sc.type}, target is ${best.col.type}. Verify conversion is safe before running.`,
-      });
+      mappings.push(buildMapping(sc, best.col, best.score));
     }
   }
 
