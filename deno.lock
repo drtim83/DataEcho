@@ -12,18 +12,26 @@
     "packageJson": {
       "dependencies": [
         "npm:@modelcontextprotocol/sdk@^1.29.0",
+        "npm:@stripe/react-stripe-js@^6.7.0",
+        "npm:@stripe/stripe-js@^9.9.0",
         "npm:@supabase/ssr@0.12",
         "npm:@supabase/supabase-js@^2.110.2",
         "npm:@tailwindcss/postcss@4",
+        "npm:@types/mssql@^12.3.0",
         "npm:@types/node@20",
+        "npm:@types/pg@^8.20.0",
         "npm:@types/react-dom@19",
         "npm:@types/react@19",
         "npm:@xyflow/react@^12.11.2",
         "npm:eslint-config-next@16.2.10",
         "npm:eslint@9",
+        "npm:mssql@^12.7.0",
+        "npm:mysql2@^3.22.6",
         "npm:next@16.2.10",
+        "npm:pg@^8.22.0",
         "npm:react-dom@19.2.4",
         "npm:react@19.2.4",
+        "npm:stripe@^22.3.1",
         "npm:tailwindcss@4",
         "npm:typescript@5"
       ]
