@@ -104,6 +104,8 @@ export function getConnectorIcon(type: string): string {
     case 'mysql': return '🐬';
     case 'supabase': return '⚡';
     case 's3': return '🪣';
+    case 'azure_blob': return '🔷';
+    case 'gcs': return '🌩️';
     case 'snowflake': return '❄️';
     case 'databricks': return '🔶';
     case 'iceberg': return '🧊';
@@ -123,6 +125,8 @@ export function getConnectorLabel(type: string): string {
     case 'mysql': return 'MySQL';
     case 'supabase': return 'Supabase';
     case 's3': return 'Amazon S3';
+    case 'azure_blob': return 'Azure Blob Storage';
+    case 'gcs': return 'Google Cloud Storage';
     case 'snowflake': return 'Snowflake';
     case 'databricks': return 'Databricks';
     case 'iceberg': return 'Apache Iceberg';

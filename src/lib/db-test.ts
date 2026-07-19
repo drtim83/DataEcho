@@ -150,6 +150,71 @@ export function serializeS3Rows(key: string, rows: Record<string, unknown>[]): s
   return JSON.stringify(rows, null, 2);
 }
 
+// Shared by db-test.ts/db-schema.ts/db-sync.ts. Account name/key ("shared
+// key" auth) rather than a connection string or SAS token, to keep the same
+// host/database/username/password shape every other connector uses.
+// input.host doubles as an optional endpoint override (e.g. Azurite);
+// blank derives the real Azure endpoint from the account name.
+export async function createAzureContainerClient(input: DbTestInput) {
+  const { BlobServiceClient, StorageSharedKeyCredential } = await import('@azure/storage-blob');
+  const accountName = input.username || '';
+  const credential = new StorageSharedKeyCredential(accountName, input.password || '');
+  const endpoint = input.host || `https://${accountName}.blob.core.windows.net`;
+  const serviceClient = new BlobServiceClient(endpoint, credential);
+  return serviceClient.getContainerClient(input.database);
+}
+
+// Azure's SDK doesn't ship an AWS-SDK-v3-style transformToString() helper —
+// blob downloads return a raw Node readable stream to consume manually.
+export async function streamToString(readable: NodeJS.ReadableStream): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of readable) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString('utf-8');
+}
+
+async function testAzure(input: DbTestInput): Promise<DbTestResult> {
+  const containerClient = await createAzureContainerClient(input);
+  await withTimeout(containerClient.getProperties(), TIMEOUT_MS);
+  return { success: true, supported: true, message: 'Connection successful.' };
+}
+
+// Shared by db-test.ts/db-schema.ts/db-sync.ts. GCS auth is normally a full
+// service-account JSON key rather than a simple key pair; the "password"
+// field holds that key minified to one line (valid JSON either way — the
+// private key's newlines are already \n-escaped inside the JSON string, not
+// literal), which fits the existing single-line password input without a
+// form redesign. "username" optionally holds the project ID, otherwise it's
+// read from the key itself. input.host doubles as an optional API endpoint
+// override (e.g. fake-gcs-server); blank connects to real GCS.
+export async function createGcsBucket(input: DbTestInput) {
+  const { Storage } = await import('@google-cloud/storage');
+  let credentials: Record<string, unknown> | undefined;
+  if (input.password) {
+    try {
+      credentials = JSON.parse(input.password);
+    } catch {
+      // Not valid JSON — likely pointed at an emulator that doesn't need
+      // real credentials; proceed without them.
+    }
+  }
+  const projectId = input.username || (credentials?.project_id as string | undefined) || 'local-project';
+  const storage = new Storage({
+    projectId,
+    credentials,
+    apiEndpoint: input.host || undefined,
+  });
+  return storage.bucket(input.database);
+}
+
+async function testGcs(input: DbTestInput): Promise<DbTestResult> {
+  const bucket = await createGcsBucket(input);
+  const [exists] = await withTimeout(bucket.exists(), TIMEOUT_MS);
+  if (!exists) throw new Error(`Bucket "${input.database}" does not exist or is not accessible.`);
+  return { success: true, supported: true, message: 'Connection successful.' };
+}
+
 async function testS3(input: DbTestInput): Promise<DbTestResult> {
   const { HeadBucketCommand } = await import('@aws-sdk/client-s3');
   const client = await createS3Client(input);
@@ -209,6 +274,12 @@ export async function testConnection(input: DbTestInput): Promise<DbTestResult> 
         break;
       case 's3':
         result = await testS3(input);
+        break;
+      case 'azure_blob':
+        result = await testAzure(input);
+        break;
+      case 'gcs':
+        result = await testGcs(input);
         break;
       default:
         return {

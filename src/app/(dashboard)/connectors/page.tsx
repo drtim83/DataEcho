@@ -20,6 +20,8 @@ const CONNECTOR_TYPES: { value: ConnectorType; label: string; category: Connecto
   { value: 'mysql', label: 'MySQL', category: 'on_prem' },
   { value: 'supabase', label: 'Supabase', category: 'cloud' },
   { value: 's3', label: 'Amazon S3', category: 'cloud' },
+  { value: 'azure_blob', label: 'Azure Blob Storage', category: 'cloud' },
+  { value: 'gcs', label: 'Google Cloud Storage', category: 'cloud' },
   { value: 'snowflake', label: 'Snowflake', category: 'cloud' },
   { value: 'databricks', label: 'Databricks', category: 'cloud' },
   { value: 'iceberg', label: 'Apache Iceberg', category: 'cloud' },
@@ -61,6 +63,20 @@ const FIELD_LABELS: Partial<Record<ConnectorType, FieldLabels>> = {
     database: { label: 'Bucket Name', placeholder: 'my-data-bucket' },
     username: { label: 'Access Key ID', placeholder: 'AKIA...' },
     password: { label: 'Secret Access Key', placeholder: '••••••••' },
+  },
+  azure_blob: {
+    host: { label: 'Blob Endpoint URL (optional — e.g. Azurite for local testing)', placeholder: 'Leave blank for real Azure' },
+    port: null,
+    database: { label: 'Container Name', placeholder: 'my-container' },
+    username: { label: 'Account Name', placeholder: 'mystorageaccount' },
+    password: { label: 'Account Key', placeholder: '••••••••' },
+  },
+  gcs: {
+    host: { label: 'API Endpoint (optional — e.g. fake-gcs-server for local testing)', placeholder: 'Leave blank for real GCS' },
+    port: null,
+    database: { label: 'Bucket Name', placeholder: 'my-gcs-bucket' },
+    username: { label: 'Project ID (optional — auto-detected from key)', placeholder: 'my-gcp-project' },
+    password: { label: 'Service Account Key (JSON, single line)', placeholder: '{"type":"service_account",...}' },
   },
 };
 

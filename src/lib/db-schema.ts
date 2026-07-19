@@ -1,4 +1,4 @@
-import { mssqlOptions, createS3Client, parseS3Rows, type DbTestInput } from './db-test';
+import { mssqlOptions, createS3Client, parseS3Rows, createAzureContainerClient, streamToString, createGcsBucket, type DbTestInput } from './db-test';
 
 export interface ColumnInfo {
   name: string;
@@ -131,6 +131,65 @@ async function getColumnsS3(input: DbTestInput, tableName: string): Promise<Colu
   });
 }
 
+async function listTablesAzure(input: DbTestInput): Promise<string[]> {
+  const containerClient = await createAzureContainerClient(input);
+  const keys: string[] = [];
+  for await (const blob of containerClient.listBlobsFlat()) {
+    if (/\.(csv|json)$/i.test(blob.name)) keys.push(blob.name);
+  }
+  return keys.sort();
+}
+
+async function getColumnsAzure(input: DbTestInput, tableName: string): Promise<ColumnInfo[]> {
+  const containerClient = await createAzureContainerClient(input);
+  let body = '';
+  try {
+    const download = await containerClient.getBlobClient(tableName).download();
+    body = download.readableStreamBody ? await streamToString(download.readableStreamBody) : '';
+  } catch {
+    return [];
+  }
+  if (tableName.toLowerCase().endsWith('.csv')) {
+    const headerLine = body.split(/\r?\n/).find((l) => l.length > 0);
+    if (!headerLine) return [];
+    return headerLine.split(',').map((name) => ({ name: name.trim(), type: 'text', nullable: true }));
+  }
+  const sample = parseS3Rows(tableName, body)[0] ?? {};
+  return Object.keys(sample).map((name) => {
+    const value = sample[name];
+    const type = typeof value === 'number' ? 'numeric' : typeof value === 'boolean' ? 'boolean' : 'text';
+    return { name, type, nullable: true };
+  });
+}
+
+async function listTablesGcs(input: DbTestInput): Promise<string[]> {
+  const bucket = await createGcsBucket(input);
+  const [files] = await bucket.getFiles();
+  return files.map((f) => f.name).filter((name) => /\.(csv|json)$/i.test(name)).sort();
+}
+
+async function getColumnsGcs(input: DbTestInput, tableName: string): Promise<ColumnInfo[]> {
+  const bucket = await createGcsBucket(input);
+  let body = '';
+  try {
+    const [contents] = await bucket.file(tableName).download();
+    body = contents.toString('utf-8');
+  } catch {
+    return [];
+  }
+  if (tableName.toLowerCase().endsWith('.csv')) {
+    const headerLine = body.split(/\r?\n/).find((l) => l.length > 0);
+    if (!headerLine) return [];
+    return headerLine.split(',').map((name) => ({ name: name.trim(), type: 'text', nullable: true }));
+  }
+  const sample = parseS3Rows(tableName, body)[0] ?? {};
+  return Object.keys(sample).map((name) => {
+    const value = sample[name];
+    const type = typeof value === 'number' ? 'numeric' : typeof value === 'boolean' ? 'boolean' : 'text';
+    return { name, type, nullable: true };
+  });
+}
+
 function splitSchemaTable(tableName: string, defaultSchema: string): [string, string] {
   const parts = tableName.split('.');
   return parts.length > 1 ? [parts[0], parts[1]] : [defaultSchema, parts[0]];
@@ -228,6 +287,8 @@ export async function listTables(input: DbTestInput): Promise<string[]> {
     case 'mysql': return listTablesMysql(input);
     case 'oracle': return listTablesOracle(input);
     case 's3': return listTablesS3(input);
+    case 'azure_blob': return listTablesAzure(input);
+    case 'gcs': return listTablesGcs(input);
     default: throw new Error(`Schema introspection for ${input.type} is not implemented yet.`);
   }
 }
@@ -240,6 +301,8 @@ export async function getColumns(input: DbTestInput, tableName: string): Promise
     case 'mysql': return getColumnsMysql(input, tableName);
     case 'oracle': return getColumnsOracle(input, tableName);
     case 's3': return getColumnsS3(input, tableName);
+    case 'azure_blob': return getColumnsAzure(input, tableName);
+    case 'gcs': return getColumnsGcs(input, tableName);
     default: throw new Error(`Schema introspection for ${input.type} is not implemented yet.`);
   }
 }

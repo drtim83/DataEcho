@@ -1,4 +1,4 @@
-import { mssqlOptions, createS3Client, parseS3Rows, serializeS3Rows, type DbTestInput } from './db-test';
+import { mssqlOptions, createS3Client, parseS3Rows, serializeS3Rows, createAzureContainerClient, streamToString, createGcsBucket, type DbTestInput } from './db-test';
 import type { ColumnMapping } from './schema-mapper';
 
 const TIMEOUT_MS = 15000;
@@ -102,6 +102,24 @@ async function extractS3(input: DbTestInput, table: string, columns: string[]): 
   });
 }
 
+async function extractAzure(input: DbTestInput, table: string, columns: string[]): Promise<Record<string, unknown>[]> {
+  const rows = await extractAllColumnsAzure(input, table);
+  return rows.map((row) => {
+    const out: Record<string, unknown> = {};
+    for (const c of columns) out[c] = row[c];
+    return out;
+  });
+}
+
+async function extractGcs(input: DbTestInput, table: string, columns: string[]): Promise<Record<string, unknown>[]> {
+  const rows = await extractAllColumnsGcs(input, table);
+  return rows.map((row) => {
+    const out: Record<string, unknown> = {};
+    for (const c of columns) out[c] = row[c];
+    return out;
+  });
+}
+
 export async function extractRows(input: DbTestInput, table: string, columns: string[]): Promise<Record<string, unknown>[]> {
   switch (input.type) {
     case 'mssql': return extractMssql(input, table, columns);
@@ -110,6 +128,8 @@ export async function extractRows(input: DbTestInput, table: string, columns: st
     case 'mysql': return extractMysql(input, table, columns);
     case 'oracle': return extractOracle(input, table, columns);
     case 's3': return extractS3(input, table, columns);
+    case 'azure_blob': return extractAzure(input, table, columns);
+    case 'gcs': return extractGcs(input, table, columns);
     default: throw new Error(`Data extraction for ${input.type} is not implemented yet.`);
   }
 }
@@ -193,6 +213,19 @@ async function extractAllColumnsS3(input: DbTestInput, table: string): Promise<R
   return parseS3Rows(table, body).slice(0, MAX_SYNC_ROWS);
 }
 
+async function extractAllColumnsAzure(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
+  const containerClient = await createAzureContainerClient(input);
+  const download = await containerClient.getBlobClient(table).download();
+  const body = download.readableStreamBody ? await streamToString(download.readableStreamBody) : '';
+  return parseS3Rows(table, body).slice(0, MAX_SYNC_ROWS);
+}
+
+async function extractAllColumnsGcs(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
+  const bucket = await createGcsBucket(input);
+  const [contents] = await bucket.file(table).download();
+  return parseS3Rows(table, contents.toString('utf-8')).slice(0, MAX_SYNC_ROWS);
+}
+
 async function extractAllColumns(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
   switch (input.type) {
     case 'mssql': return extractAllColumnsMssql(input, table);
@@ -201,6 +234,8 @@ async function extractAllColumns(input: DbTestInput, table: string): Promise<Rec
     case 'mysql': return extractAllColumnsMysql(input, table);
     case 'oracle': return extractAllColumnsOracle(input, table);
     case 's3': return extractAllColumnsS3(input, table);
+    case 'azure_blob': return extractAllColumnsAzure(input, table);
+    case 'gcs': return extractAllColumnsGcs(input, table);
     default: throw new Error(`Data extraction for ${input.type} is not implemented yet.`);
   }
 }
@@ -327,6 +362,46 @@ async function insertS3(input: DbTestInput, table: string, columns: string[], ro
   return projected.length;
 }
 
+async function insertAzure(input: DbTestInput, table: string, columns: string[], rows: Record<string, unknown>[]): Promise<number> {
+  const containerClient = await createAzureContainerClient(input);
+  let existing: Record<string, unknown>[] = [];
+  try {
+    const download = await containerClient.getBlobClient(table).download();
+    const body = download.readableStreamBody ? await streamToString(download.readableStreamBody) : '';
+    existing = parseS3Rows(table, body);
+  } catch {
+    // Blob doesn't exist yet — starting fresh.
+  }
+  const projected = rows.map((row) => {
+    const out: Record<string, unknown> = {};
+    for (const c of columns) out[c] = row[c] ?? null;
+    return out;
+  });
+  const combined = existing.concat(projected);
+  const content = serializeS3Rows(table, combined);
+  await containerClient.getBlockBlobClient(table).upload(content, Buffer.byteLength(content, 'utf-8'));
+  return projected.length;
+}
+
+async function insertGcs(input: DbTestInput, table: string, columns: string[], rows: Record<string, unknown>[]): Promise<number> {
+  const bucket = await createGcsBucket(input);
+  let existing: Record<string, unknown>[] = [];
+  try {
+    const [contents] = await bucket.file(table).download();
+    existing = parseS3Rows(table, contents.toString('utf-8'));
+  } catch {
+    // Object doesn't exist yet — starting fresh.
+  }
+  const projected = rows.map((row) => {
+    const out: Record<string, unknown> = {};
+    for (const c of columns) out[c] = row[c] ?? null;
+    return out;
+  });
+  const combined = existing.concat(projected);
+  await bucket.file(table).save(serializeS3Rows(table, combined));
+  return projected.length;
+}
+
 export async function insertRows(input: DbTestInput, table: string, columns: string[], rows: Record<string, unknown>[]): Promise<number> {
   switch (input.type) {
     case 'mssql': return insertMssql(input, table, columns, rows);
@@ -335,6 +410,8 @@ export async function insertRows(input: DbTestInput, table: string, columns: str
     case 'mysql': return insertMysql(input, table, columns, rows);
     case 'oracle': return insertOracle(input, table, columns, rows);
     case 's3': return insertS3(input, table, columns, rows);
+    case 'azure_blob': return insertAzure(input, table, columns, rows);
+    case 'gcs': return insertGcs(input, table, columns, rows);
     default: throw new Error(`Data loading for ${input.type} is not implemented yet.`);
   }
 }
@@ -406,6 +483,16 @@ async function truncateS3(input: DbTestInput, table: string): Promise<void> {
   await client.send(new DeleteObjectCommand({ Bucket: input.database, Key: table }));
 }
 
+async function truncateAzure(input: DbTestInput, table: string): Promise<void> {
+  const containerClient = await createAzureContainerClient(input);
+  await containerClient.getBlobClient(table).deleteIfExists();
+}
+
+async function truncateGcs(input: DbTestInput, table: string): Promise<void> {
+  const bucket = await createGcsBucket(input);
+  await bucket.file(table).delete({ ignoreNotFound: true });
+}
+
 async function truncateTable(input: DbTestInput, table: string): Promise<void> {
   switch (input.type) {
     case 'mssql': return truncateMssql(input, table);
@@ -414,6 +501,8 @@ async function truncateTable(input: DbTestInput, table: string): Promise<void> {
     case 'mysql': return truncateMysql(input, table);
     case 'oracle': return truncateOracle(input, table);
     case 's3': return truncateS3(input, table);
+    case 'azure_blob': return truncateAzure(input, table);
+    case 'gcs': return truncateGcs(input, table);
     default: throw new Error(`Truncate is not implemented for ${input.type}.`);
   }
 }
@@ -558,6 +647,19 @@ async function previewS3(input: DbTestInput, table: string): Promise<Record<stri
   return parseS3Rows(table, body).slice(0, PREVIEW_ROWS);
 }
 
+async function previewAzure(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
+  const containerClient = await createAzureContainerClient(input);
+  const download = await containerClient.getBlobClient(table).download();
+  const body = download.readableStreamBody ? await streamToString(download.readableStreamBody) : '';
+  return parseS3Rows(table, body).slice(0, PREVIEW_ROWS);
+}
+
+async function previewGcs(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
+  const bucket = await createGcsBucket(input);
+  const [contents] = await bucket.file(table).download();
+  return parseS3Rows(table, contents.toString('utf-8')).slice(0, PREVIEW_ROWS);
+}
+
 export async function previewTable(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
   switch (input.type) {
     case 'mssql': return previewMssql(input, table);
@@ -566,6 +668,8 @@ export async function previewTable(input: DbTestInput, table: string): Promise<R
     case 'mysql': return previewMysql(input, table);
     case 'oracle': return previewOracle(input, table);
     case 's3': return previewS3(input, table);
+    case 'azure_blob': return previewAzure(input, table);
+    case 'gcs': return previewGcs(input, table);
     default: throw new Error(`Data preview for ${input.type} is not implemented yet.`);
   }
 }
