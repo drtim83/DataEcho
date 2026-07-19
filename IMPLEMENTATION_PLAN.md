@@ -82,7 +82,8 @@ API calls) — not just typechecked or assumed working, unless noted otherwise.
 - `/demo` is fully hardcoded, simulated data — safe for sales walkthroughs. One deliberate exception: a "Test Live Connection" button that runs one real read-only query, clearly separated from the simulated data around it.
 
 ### Deployment
-- Live on Netlify (`dataecho-demo-app-v1.netlify.app`), same Supabase project as local dev.
+- Live on Netlify (`dataecho-demo-app-v1.netlify.app`), same Supabase project as local dev. All work through this cycle (Oracle, the MSSQL IP-connection fix, S3, Azure Blob, GCS, the schema-mapper two-pass fix, and the Stripe fetch-client fix) is deployed and confirmed live with no console errors.
+- A GitHub remote (`github.com/drtim83/DataEcho`, public) is configured locally, `gh` is authenticated, and one real fix was made before attempting the push: `agent/node_modules` and `agent/dist` (11k+ files, 128MB) had been accidentally committed — the root `.gitignore`'s `/node_modules` pattern only excluded the top-level folder, not the nested one under `agent/`. Untracked both and broadened the ignore pattern to cover `node_modules` at any depth. **The push itself hasn't completed yet** — `git push -u origin main` needs `gh auth setup-git` run first to wire up git's credential helper (a git-config change, so left for the project owner to run rather than done automatically); the GitHub repo currently still only has its original pre-session initial commit.
 
 ### Known Issues Fixed This Cycle
 - MCP tools were mostly hardcoded canned responses — rewired to real logic (biggest defect found in the codebase sweep).
