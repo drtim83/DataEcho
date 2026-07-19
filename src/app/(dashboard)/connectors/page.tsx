@@ -19,6 +19,7 @@ const CONNECTOR_TYPES: { value: ConnectorType; label: string; category: Connecto
   { value: 'postgresql', label: 'PostgreSQL', category: 'on_prem' },
   { value: 'mysql', label: 'MySQL', category: 'on_prem' },
   { value: 'supabase', label: 'Supabase', category: 'cloud' },
+  { value: 's3', label: 'Amazon S3', category: 'cloud' },
   { value: 'snowflake', label: 'Snowflake', category: 'cloud' },
   { value: 'databricks', label: 'Databricks', category: 'cloud' },
   { value: 'iceberg', label: 'Apache Iceberg', category: 'cloud' },
@@ -31,6 +32,36 @@ const DEFAULT_PORTS: Partial<Record<ConnectorType, number>> = {
   oracle: 1521,
   db2: 50000,
   supabase: 5432,
+};
+
+// Object storage connectors reuse the same host/database/username/password
+// fields as the SQL connectors (same `config` jsonb shape, no schema change
+// needed) but with different real-world meaning — this just relabels the
+// form per type rather than adding a parallel set of fields.
+interface FieldLabels {
+  host: { label: string; placeholder: string };
+  port: { label: string; placeholder: string } | null; // null hides the field
+  database: { label: string; placeholder: string };
+  username: { label: string; placeholder: string };
+  password: { label: string; placeholder: string };
+}
+
+const DEFAULT_FIELD_LABELS: FieldLabels = {
+  host: { label: 'Host', placeholder: '10.0.1.50' },
+  port: { label: 'Port', placeholder: '1433' },
+  database: { label: 'Database', placeholder: 'MyDatabase' },
+  username: { label: 'Username', placeholder: 'sa' },
+  password: { label: 'Password', placeholder: '••••••••' },
+};
+
+const FIELD_LABELS: Partial<Record<ConnectorType, FieldLabels>> = {
+  s3: {
+    host: { label: 'Endpoint URL (optional — S3-compatible storage, e.g. LocalStack)', placeholder: 'Leave blank for real AWS S3' },
+    port: null,
+    database: { label: 'Bucket Name', placeholder: 'my-data-bucket' },
+    username: { label: 'Access Key ID', placeholder: 'AKIA...' },
+    password: { label: 'Secret Access Key', placeholder: '••••••••' },
+  },
 };
 
 interface FormState {
@@ -232,6 +263,8 @@ export default function ConnectorsPage() {
     setPreviewError('');
   }
 
+  const fields = FIELD_LABELS[form.type] || DEFAULT_FIELD_LABELS;
+
   return (
     <>
       <TopBar title="Connector Hub" subtitle="Manage data source and target connections" />
@@ -424,51 +457,53 @@ export default function ConnectorsPage() {
                     {ROLE_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
                   </select>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className={fields.port ? 'grid grid-cols-2 gap-4' : ''}>
                   <div>
-                    <label className="block text-xs font-medium mb-1.5 uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Host</label>
+                    <label className="block text-xs font-medium mb-1.5 uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>{fields.host.label}</label>
                     <input
                       className="input-field"
-                      placeholder="10.0.1.50"
+                      placeholder={fields.host.placeholder}
                       value={form.host}
                       onChange={(e) => updateForm('host', e.target.value)}
                     />
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium mb-1.5 uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Port</label>
-                    <input
-                      className="input-field"
-                      placeholder="1433"
-                      value={form.port}
-                      onChange={(e) => updateForm('port', e.target.value)}
-                    />
-                  </div>
+                  {fields.port && (
+                    <div>
+                      <label className="block text-xs font-medium mb-1.5 uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>{fields.port.label}</label>
+                      <input
+                        className="input-field"
+                        placeholder={fields.port.placeholder}
+                        value={form.port}
+                        onChange={(e) => updateForm('port', e.target.value)}
+                      />
+                    </div>
+                  )}
                 </div>
                 <div>
-                  <label className="block text-xs font-medium mb-1.5 uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Database</label>
+                  <label className="block text-xs font-medium mb-1.5 uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>{fields.database.label}</label>
                   <input
                     className="input-field"
-                    placeholder="MyDatabase"
+                    placeholder={fields.database.placeholder}
                     value={form.database}
                     onChange={(e) => updateForm('database', e.target.value)}
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-medium mb-1.5 uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Username</label>
+                    <label className="block text-xs font-medium mb-1.5 uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>{fields.username.label}</label>
                     <input
                       className="input-field"
-                      placeholder="sa"
+                      placeholder={fields.username.placeholder}
                       value={form.username}
                       onChange={(e) => updateForm('username', e.target.value)}
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-medium mb-1.5 uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Password</label>
+                    <label className="block text-xs font-medium mb-1.5 uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>{fields.password.label}</label>
                     <input
                       type="password"
                       className="input-field"
-                      placeholder="••••••••"
+                      placeholder={fields.password.placeholder}
                       value={form.password}
                       onChange={(e) => updateForm('password', e.target.value)}
                     />

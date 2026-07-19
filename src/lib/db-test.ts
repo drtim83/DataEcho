@@ -103,6 +103,60 @@ async function testOracle(input: DbTestInput): Promise<DbTestResult> {
   }
 }
 
+// Shared by db-test.ts/db-schema.ts/db-sync.ts. input.host doubles as an
+// optional S3-compatible endpoint override (e.g. LocalStack); left blank it
+// connects to real AWS S3. Region isn't exposed in the connector form yet —
+// hardcoded to us-east-1 (see IMPLEMENTATION_PLAN.md Part 3 for the
+// follow-up to make this configurable).
+export async function createS3Client(input: DbTestInput) {
+  const { S3Client } = await import('@aws-sdk/client-s3');
+  return new S3Client({
+    region: 'us-east-1',
+    endpoint: input.host || undefined,
+    forcePathStyle: !!input.host,
+    credentials: { accessKeyId: input.username || '', secretAccessKey: input.password || '' },
+  });
+}
+
+// A "table" for an S3 connector is a single object key holding either CSV or
+// JSON (array of flat objects), chosen by file extension — not a whole
+// prefix/multi-file scan. The CSV path is a naive split (no quoted-comma
+// escaping); fine for the straightforward exports this targets, not a
+// general-purpose CSV engine.
+export function parseS3Rows(key: string, body: string): Record<string, unknown>[] {
+  if (key.toLowerCase().endsWith('.csv')) {
+    const lines = body.split(/\r?\n/).filter((l) => l.length > 0);
+    if (lines.length === 0) return [];
+    const headers = lines[0].split(',').map((h) => h.trim());
+    return lines.slice(1).map((line) => {
+      const values = line.split(',');
+      const row: Record<string, unknown> = {};
+      headers.forEach((h, i) => { row[h] = values[i]?.trim() ?? null; });
+      return row;
+    });
+  }
+  if (!body.trim()) return [];
+  const parsed = JSON.parse(body);
+  return Array.isArray(parsed) ? parsed : [parsed];
+}
+
+export function serializeS3Rows(key: string, rows: Record<string, unknown>[]): string {
+  if (key.toLowerCase().endsWith('.csv')) {
+    if (rows.length === 0) return '';
+    const headers = Object.keys(rows[0]);
+    const lines = [headers.join(','), ...rows.map((row) => headers.map((h) => String(row[h] ?? '')).join(','))];
+    return lines.join('\n');
+  }
+  return JSON.stringify(rows, null, 2);
+}
+
+async function testS3(input: DbTestInput): Promise<DbTestResult> {
+  const { HeadBucketCommand } = await import('@aws-sdk/client-s3');
+  const client = await createS3Client(input);
+  await withTimeout(client.send(new HeadBucketCommand({ Bucket: input.database })), TIMEOUT_MS);
+  return { success: true, supported: true, message: 'Connection successful.' };
+}
+
 async function testMysql(input: DbTestInput): Promise<DbTestResult> {
   const mysql = await import('mysql2/promise');
   const connection = await withTimeout(
@@ -152,6 +206,9 @@ export async function testConnection(input: DbTestInput): Promise<DbTestResult> 
         break;
       case 'oracle':
         result = await testOracle(input);
+        break;
+      case 's3':
+        result = await testS3(input);
         break;
       default:
         return {

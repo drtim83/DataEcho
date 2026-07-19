@@ -103,6 +103,7 @@ export function getConnectorIcon(type: string): string {
     case 'postgresql': return '🐘';
     case 'mysql': return '🐬';
     case 'supabase': return '⚡';
+    case 's3': return '🪣';
     case 'snowflake': return '❄️';
     case 'databricks': return '🔶';
     case 'iceberg': return '🧊';
@@ -121,6 +122,7 @@ export function getConnectorLabel(type: string): string {
     case 'postgresql': return 'PostgreSQL';
     case 'mysql': return 'MySQL';
     case 'supabase': return 'Supabase';
+    case 's3': return 'Amazon S3';
     case 'snowflake': return 'Snowflake';
     case 'databricks': return 'Databricks';
     case 'iceberg': return 'Apache Iceberg';

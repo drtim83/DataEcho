@@ -1,4 +1,4 @@
-import { mssqlOptions, type DbTestInput } from './db-test';
+import { mssqlOptions, createS3Client, parseS3Rows, type DbTestInput } from './db-test';
 
 export interface ColumnInfo {
   name: string;
@@ -83,6 +83,52 @@ async function listTablesOracle(input: DbTestInput): Promise<string[]> {
   } finally {
     await connection.close().catch(() => {});
   }
+}
+
+// "Tables" for an S3 connector are individual .csv/.json object keys in the
+// bucket, not a schema-level concept — every matching key is listed as one.
+async function listTablesS3(input: DbTestInput): Promise<string[]> {
+  const { ListObjectsV2Command } = await import('@aws-sdk/client-s3');
+  const client = await createS3Client(input);
+  const keys: string[] = [];
+  let continuationToken: string | undefined;
+  do {
+    const result = await client.send(new ListObjectsV2Command({ Bucket: input.database, ContinuationToken: continuationToken }));
+    for (const obj of result.Contents ?? []) {
+      if (obj.Key && /\.(csv|json)$/i.test(obj.Key)) keys.push(obj.Key);
+    }
+    continuationToken = result.IsTruncated ? result.NextContinuationToken : undefined;
+  } while (continuationToken);
+  return keys.sort();
+}
+
+async function getColumnsS3(input: DbTestInput, tableName: string): Promise<ColumnInfo[]> {
+  const { GetObjectCommand } = await import('@aws-sdk/client-s3');
+  const client = await createS3Client(input);
+  let body = '';
+  try {
+    const result = await client.send(new GetObjectCommand({ Bucket: input.database, Key: tableName }));
+    body = (await result.Body?.transformToString('utf-8')) ?? '';
+  } catch {
+    // A sync target commonly doesn't exist yet on its first run — there's no
+    // file-based equivalent of "CREATE TABLE" to pre-declare its columns, so
+    // an absent key just means "no columns known yet" rather than an error.
+    return [];
+  }
+  // CSV: read the header row directly so a file with a header but zero data
+  // rows (the object-storage equivalent of an empty pre-created table) still
+  // reports its real columns, rather than only inferring from sample data.
+  if (tableName.toLowerCase().endsWith('.csv')) {
+    const headerLine = body.split(/\r?\n/).find((l) => l.length > 0);
+    if (!headerLine) return [];
+    return headerLine.split(',').map((name) => ({ name: name.trim(), type: 'text', nullable: true }));
+  }
+  const sample = parseS3Rows(tableName, body)[0] ?? {};
+  return Object.keys(sample).map((name) => {
+    const value = sample[name];
+    const type = typeof value === 'number' ? 'numeric' : typeof value === 'boolean' ? 'boolean' : 'text';
+    return { name, type, nullable: true };
+  });
 }
 
 function splitSchemaTable(tableName: string, defaultSchema: string): [string, string] {
@@ -181,6 +227,7 @@ export async function listTables(input: DbTestInput): Promise<string[]> {
     case 'supabase': return listTablesPostgres(input);
     case 'mysql': return listTablesMysql(input);
     case 'oracle': return listTablesOracle(input);
+    case 's3': return listTablesS3(input);
     default: throw new Error(`Schema introspection for ${input.type} is not implemented yet.`);
   }
 }
@@ -192,6 +239,7 @@ export async function getColumns(input: DbTestInput, tableName: string): Promise
     case 'supabase': return getColumnsPostgres(input, tableName);
     case 'mysql': return getColumnsMysql(input, tableName);
     case 'oracle': return getColumnsOracle(input, tableName);
+    case 's3': return getColumnsS3(input, tableName);
     default: throw new Error(`Schema introspection for ${input.type} is not implemented yet.`);
   }
 }

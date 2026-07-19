@@ -1,4 +1,4 @@
-import { mssqlOptions, type DbTestInput } from './db-test';
+import { mssqlOptions, createS3Client, parseS3Rows, serializeS3Rows, type DbTestInput } from './db-test';
 import type { ColumnMapping } from './schema-mapper';
 
 const TIMEOUT_MS = 15000;
@@ -90,6 +90,18 @@ async function extractOracle(input: DbTestInput, table: string, columns: string[
   }
 }
 
+// There's no server-side column projection for a flat file the way SQL's
+// SELECT col1, col2 does it, so this fetches everything and picks out the
+// requested columns client-side.
+async function extractS3(input: DbTestInput, table: string, columns: string[]): Promise<Record<string, unknown>[]> {
+  const rows = await extractAllColumnsS3(input, table);
+  return rows.map((row) => {
+    const out: Record<string, unknown> = {};
+    for (const c of columns) out[c] = row[c];
+    return out;
+  });
+}
+
 export async function extractRows(input: DbTestInput, table: string, columns: string[]): Promise<Record<string, unknown>[]> {
   switch (input.type) {
     case 'mssql': return extractMssql(input, table, columns);
@@ -97,6 +109,7 @@ export async function extractRows(input: DbTestInput, table: string, columns: st
     case 'supabase': return extractPostgres(input, table, columns);
     case 'mysql': return extractMysql(input, table, columns);
     case 'oracle': return extractOracle(input, table, columns);
+    case 's3': return extractS3(input, table, columns);
     default: throw new Error(`Data extraction for ${input.type} is not implemented yet.`);
   }
 }
@@ -172,6 +185,14 @@ async function extractAllColumnsOracle(input: DbTestInput, table: string): Promi
   }
 }
 
+async function extractAllColumnsS3(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
+  const { GetObjectCommand } = await import('@aws-sdk/client-s3');
+  const client = await createS3Client(input);
+  const result = await client.send(new GetObjectCommand({ Bucket: input.database, Key: table }));
+  const body = (await result.Body?.transformToString('utf-8')) ?? '';
+  return parseS3Rows(table, body).slice(0, MAX_SYNC_ROWS);
+}
+
 async function extractAllColumns(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
   switch (input.type) {
     case 'mssql': return extractAllColumnsMssql(input, table);
@@ -179,6 +200,7 @@ async function extractAllColumns(input: DbTestInput, table: string): Promise<Rec
     case 'supabase': return extractAllColumnsPostgres(input, table);
     case 'mysql': return extractAllColumnsMysql(input, table);
     case 'oracle': return extractAllColumnsOracle(input, table);
+    case 's3': return extractAllColumnsS3(input, table);
     default: throw new Error(`Data extraction for ${input.type} is not implemented yet.`);
   }
 }
@@ -279,6 +301,32 @@ async function insertOracle(input: DbTestInput, table: string, columns: string[]
   }
 }
 
+// SQL "insert" is naturally additive; a flat file isn't, so this reads
+// whatever's already at the key (if anything — a fresh key or one just
+// cleared by truncateS3 is empty), appends the new rows, and rewrites the
+// whole object. truncateTable() already runs before this in runSync() for
+// truncate_reload mode, so this function itself only ever needs to append.
+async function insertS3(input: DbTestInput, table: string, columns: string[], rows: Record<string, unknown>[]): Promise<number> {
+  const { GetObjectCommand, PutObjectCommand } = await import('@aws-sdk/client-s3');
+  const client = await createS3Client(input);
+  let existing: Record<string, unknown>[] = [];
+  try {
+    const result = await client.send(new GetObjectCommand({ Bucket: input.database, Key: table }));
+    const body = (await result.Body?.transformToString('utf-8')) ?? '';
+    existing = parseS3Rows(table, body);
+  } catch {
+    // Key doesn't exist yet — starting fresh.
+  }
+  const projected = rows.map((row) => {
+    const out: Record<string, unknown> = {};
+    for (const c of columns) out[c] = row[c] ?? null;
+    return out;
+  });
+  const combined = existing.concat(projected);
+  await client.send(new PutObjectCommand({ Bucket: input.database, Key: table, Body: serializeS3Rows(table, combined) }));
+  return projected.length;
+}
+
 export async function insertRows(input: DbTestInput, table: string, columns: string[], rows: Record<string, unknown>[]): Promise<number> {
   switch (input.type) {
     case 'mssql': return insertMssql(input, table, columns, rows);
@@ -286,6 +334,7 @@ export async function insertRows(input: DbTestInput, table: string, columns: str
     case 'supabase': return insertPostgres(input, table, columns, rows);
     case 'mysql': return insertMysql(input, table, columns, rows);
     case 'oracle': return insertOracle(input, table, columns, rows);
+    case 's3': return insertS3(input, table, columns, rows);
     default: throw new Error(`Data loading for ${input.type} is not implemented yet.`);
   }
 }
@@ -351,6 +400,12 @@ async function truncateOracle(input: DbTestInput, table: string): Promise<void> 
   }
 }
 
+async function truncateS3(input: DbTestInput, table: string): Promise<void> {
+  const { DeleteObjectCommand } = await import('@aws-sdk/client-s3');
+  const client = await createS3Client(input);
+  await client.send(new DeleteObjectCommand({ Bucket: input.database, Key: table }));
+}
+
 async function truncateTable(input: DbTestInput, table: string): Promise<void> {
   switch (input.type) {
     case 'mssql': return truncateMssql(input, table);
@@ -358,6 +413,7 @@ async function truncateTable(input: DbTestInput, table: string): Promise<void> {
     case 'supabase': return truncatePostgres(input, table);
     case 'mysql': return truncateMysql(input, table);
     case 'oracle': return truncateOracle(input, table);
+    case 's3': return truncateS3(input, table);
     default: throw new Error(`Truncate is not implemented for ${input.type}.`);
   }
 }
@@ -494,6 +550,14 @@ async function previewOracle(input: DbTestInput, table: string): Promise<Record<
   }
 }
 
+async function previewS3(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
+  const { GetObjectCommand } = await import('@aws-sdk/client-s3');
+  const client = await createS3Client(input);
+  const result = await client.send(new GetObjectCommand({ Bucket: input.database, Key: table }));
+  const body = (await result.Body?.transformToString('utf-8')) ?? '';
+  return parseS3Rows(table, body).slice(0, PREVIEW_ROWS);
+}
+
 export async function previewTable(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
   switch (input.type) {
     case 'mssql': return previewMssql(input, table);
@@ -501,6 +565,7 @@ export async function previewTable(input: DbTestInput, table: string): Promise<R
     case 'supabase': return previewPostgres(input, table);
     case 'mysql': return previewMysql(input, table);
     case 'oracle': return previewOracle(input, table);
+    case 's3': return previewS3(input, table);
     default: throw new Error(`Data preview for ${input.type} is not implemented yet.`);
   }
 }

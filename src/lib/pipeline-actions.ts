@@ -175,7 +175,7 @@ export async function runSchemaMapping(supabase: SupabaseClient, user: User, pip
     supabase.from('pipeline_sources').select('source_id, source_table').eq('pipeline_id', pipelineId).eq('combine_mode', 'join'),
   ]);
 
-  const [sourceCols, targetCols, joinSourceCols] = await Promise.all([
+  const [sourceCols, targetColsRaw, joinSourceCols] = await Promise.all([
     getColumns(sourceConn, pipeline.source_table),
     getColumns(targetConn, pipeline.target_table),
     Promise.all(
@@ -185,6 +185,12 @@ export async function runSchemaMapping(supabase: SupabaseClient, user: User, pip
       })
     ).then((cols) => cols.flat()),
   ]);
+
+  // A brand-new file-based target (e.g. an S3 object nothing has written to
+  // yet) has no columns to introspect — there's no file-storage equivalent
+  // of pre-declaring a table's schema via DDL. Mirror the source's shape in
+  // that case, since the sync itself will define the target's real shape.
+  const targetCols = targetColsRaw.length > 0 ? targetColsRaw : sourceCols;
 
   // Joined sources can contribute columns the primary source doesn't have
   // (e.g. a joined customers.name); the primary source's own columns take

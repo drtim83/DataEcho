@@ -134,12 +134,25 @@ now built and verified. What's left:
 
 ## Part 3 — Connector Expansion Plan: Warehouses & Object Storage
 
-Planning only — nothing below is built yet. Covers Databricks, Snowflake,
-and object storage (AWS S3 / Azure Blob-ADLS / Google Cloud Storage) as
-source-or-target connectors, plus the harder question of Delta Lake /
-Iceberg table-format conversion on top of object storage. Package names
-and Docker image names below were checked to actually exist (`npm view`,
-`docker manifest inspect`) before writing this, not assumed.
+Covers Databricks, Snowflake, and object storage (AWS S3 / Azure
+Blob-ADLS / Google Cloud Storage) as source-or-target connectors, plus
+the harder question of Delta Lake / Iceberg table-format conversion on
+top of object storage. Package names and Docker image names were
+checked to actually exist (`npm view`, `docker manifest inspect`)
+before writing the plan, not assumed. S3 (below) is now built and
+verified live; Azure/GCS/Snowflake/Databricks/Delta/Iceberg remain
+planning-only.
+
+### Amazon S3 — built and verified live
+- `@aws-sdk/client-s3` wired into `db-test.ts`/`db-schema.ts`/`db-sync.ts` following the same driver pattern as the SQL connectors, plus a new `region` — hardcoded to `us-east-1` for now, not yet exposed in the connector form (real follow-up, not a blocker). `host` doubles as an optional S3-compatible endpoint override (blank connects to real AWS; a URL like a local MinIO/LocalStack endpoint routes elsewhere), with `forcePathStyle` enabled whenever an endpoint override is set, since path-style addressing is what local S3-compatible servers expect.
+- A "table" is a single `.csv` or `.json` object key, not a whole prefix/multi-file scan — deliberately scoped tight for a first working version, matching how every other connector in this app started (single credentials, one table, MVP-then-expand).
+- Sync-mode semantics map cleanly onto the existing `runSync()` control flow with zero changes there: `truncateS3` deletes the key (used only for `truncate_reload`), and `insertS3` always appends — reading whatever's already at the key (if anything) and rewriting the combined set — which is exactly right for `append` mode and, combined with the truncate step, exactly right for `truncate_reload` too.
+- **Two real bugs found via live testing and fixed**:
+  1. `getColumnsS3` threw when the target key didn't exist yet (the normal case for a sync's first run — there's no file-storage equivalent of pre-declaring a table's schema via `CREATE TABLE`). Fixed to return an empty column list instead of erroring, and `runSchemaMapping()` (`pipeline-actions.ts`) now falls back to mirroring the source's own columns when a target genuinely has none yet.
+  2. `getColumnsS3` originally inferred columns only from parsed data rows, so a CSV with a header but zero data rows (the object-storage equivalent of an empty pre-created table) reported no columns at all. Fixed to read the CSV header line directly.
+- **Verified live** against a real MinIO container (S3-API-compatible, not a mock): connection test, schema introspection on both a JSON and a CSV source, mapping, `append` mode (confirmed 3→6 rows across two runs), `truncate_reload` mode (confirmed it stays at 3 rows across two runs, not accumulating) — every check done by reading the target object directly via the AWS SDK, bypassing the app entirely.
+- Note on the emulator choice: `localstack/localstack:latest` now gates behind a paid license (its `latest` tag defaults to the Pro image and refuses to start without an auth token) — switched to MinIO instead, which is genuinely free with no licensing gate.
+- **Known limitations, honestly scoped for a first version, not silently swept under the rug**: region isn't yet configurable from the UI (hardcoded `us-east-1`); CSV parsing is a naive comma-split with no quoted-comma escaping; a "table" is one object key, not a prefix of many files; Parquet isn't supported (only CSV/JSON).
 
 ### Snowflake — feasible, same shape as the existing SQL connectors
 - Official driver: `snowflake-sdk` (npm, actively maintained, confirmed on npm).
