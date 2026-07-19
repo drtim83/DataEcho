@@ -129,3 +129,43 @@ now built and verified. What's left:
 - **Join key type reconciliation**: if a join key's underlying type differs across engines (e.g. `INT` on one side, `NUMERIC` or `VARCHAR` on the other), matching is done via string coercion (`String(value)`), which works for most cases but hasn't been stress-tested against, say, floating-point formatting differences or leading zeros.
 - **Per-destination sync results aren't shown individually in the UI yet** — Progress Monitor/Scheduler only show the primary run's outcome. The data exists (`SyncResult.destinationResults`), just isn't surfaced.
 - **Chained joins against evolving row sets**: joining source B then source C matches C against the *post-join-B* row set (real multi-way join chaining semantics, `A JOIN B JOIN C`), which is correct but means join order matters and isn't currently reorderable in the UI once added.
+
+---
+
+## Part 3 — Connector Expansion Plan: Warehouses & Object Storage
+
+Planning only — nothing below is built yet. Covers Databricks, Snowflake,
+and object storage (AWS S3 / Azure Blob-ADLS / Google Cloud Storage) as
+source-or-target connectors, plus the harder question of Delta Lake /
+Iceberg table-format conversion on top of object storage. Package names
+and Docker image names below were checked to actually exist (`npm view`,
+`docker manifest inspect`) before writing this, not assumed.
+
+### Snowflake — feasible, same shape as the existing SQL connectors
+- Official driver: `snowflake-sdk` (npm, actively maintained, confirmed on npm).
+- Wires in the same way as `oracledb`/`mssql`/`mysql2`/`pg`: `snowflake.createConnection({ account, username, password, warehouse, database, schema })`, `connection.execute({ sqlText, binds })`.
+- Auth note: Snowflake commonly uses key-pair auth for service accounts rather than a plain password; the connector form would need an optional private-key field alongside username/password, not just reuse the existing 4-field (host/port/database/username/password) shape unmodified.
+- **Local testability: none.** Snowflake is pure SaaS with no official (or credible unofficial) local emulator — unlike Postgres/MySQL/MSSQL/Oracle, there's no Docker image to spin up. Real live verification needs a real Snowflake account. Snowflake's free trial (~$400 credit, 30 days) is a genuine signup, not something I can create — would need you to sign up and hand me connection details the same way we did for MSSQL/Oracle credentials.
+
+### Databricks — feasible via REST, same local-testability gap
+- No JDBC/ODBC needed: Databricks' SQL Statement Execution API (`POST /api/2.0/sql/statements`, polled via `GET /api/2.0/sql/statements/{id}`) runs over plain HTTPS with a personal access token and a SQL warehouse ID. Buildable with `fetch`, no native driver dependency at all.
+- Schema introspection via the same API (`DESCRIBE TABLE`, `SHOW TABLES`) or Databricks' Unity Catalog REST API directly.
+- **Local testability: none.** Same as Snowflake — Databricks isn't self-hostable. Needs a real workspace with a running SQL warehouse (their trial exists but is a real signup, and warehouses cost per-hour once trial credits run out).
+
+### Object storage (AWS S3 / Azure Blob+ADLS / Google Cloud Storage) — feasible, and genuinely locally testable
+This is the one part of this expansion that doesn't need real cloud accounts to build *and verify* end-to-end, the same way Postgres/MySQL/MSSQL/Oracle didn't:
+- **AWS S3**: `@aws-sdk/client-s3` (official, confirmed on npm). Local emulator: `localstack/localstack` (Docker image confirmed to exist) — runs a real S3-API-compatible server locally, no AWS account needed for dev/test.
+- **Azure Blob Storage / ADLS Gen2**: `@azure/storage-blob` (official, confirmed on npm) for Blob; ADLS Gen2 (hierarchical namespace) needs `@azure/storage-file-datalake` for directory-aware operations. Local emulator: `mcr.microsoft.com/azure-storage/azurite` (Microsoft's own official emulator image, confirmed to exist).
+- **Google Cloud Storage**: `@google-cloud/storage` (official, confirmed on npm). Local emulator: `fsouza/fake-gcs-server` (widely used community emulator, confirmed to exist) — not Google-official, but mature and commonly used for exactly this purpose.
+- **Shape mismatch with the current sync engine**: `runSync()` today extracts *rows* from a SQL source and `INSERT`s *rows* into a SQL target. Object storage as a target isn't row-inserts — it's "serialize the extracted rows to a file (CSV/JSON/Parquet) and `PutObject`/`upload` it." Object storage as a *source* is similarly file-shaped, not table-shaped: it'd mean reading and parsing a file, not `SELECT`ing from a table (the `table_name` field in the pipeline UI would need to become "file path / prefix" for this connector type). This needs a real branch in the sync engine, not just another case in the existing `switch (input.type)` blocks — a plain file dump (CSV/JSON) is a moderate addition; **Parquet specifically needs a writer/reader library too** (e.g. `parquetjs` or, more robustly, embedding DuckDB — see below), it's not just `fs.writeFile`.
+
+### Delta Lake / Iceberg table format — the hard part, independent of which cloud
+Both are a columnar *table format* layered on top of object storage (Parquet data files + a metadata tree — Avro manifests for Iceberg, JSON+checkpoint files for Delta), not a target you write rows into directly. This doesn't fit anywhere in the current row-based sync engine and would be a genuinely new subsystem, not a driver plug-in:
+- **No mature pure-Node.js writer for either format.** The realistic options are (a) embed DuckDB (`@duckdb/node-api`, confirmed on npm) — it has an `iceberg` extension with growing write support and a `delta` extension that's stronger on read than write, or (b) shell out to a lightweight Python subprocess using `pyiceberg` or `deltalake` (delta-rs' Python bindings — pure Rust under the hood, no JVM), which are the most mature writers available anywhere outside the Spark/JVM ecosystem.
+- **Which of those is actually the right call needs a short feasibility spike first** — specifically, testing DuckDB's current Iceberg/Delta *write* support (not just read) against a real local object-storage emulator, before committing to either the DuckDB-embedded approach or the Python-subprocess approach. I don't want to assert one is definitely right without having actually driven it.
+- Realistic scope: this is a multi-day feature (new extraction-to-file pipeline path, a table-format writer, real object storage auth, and its own set of live-verification tests against the emulators above) — not something to fold into the existing per-connector-type `switch` statements alongside a driver import.
+
+### Suggested order, if this gets built
+1. Object storage connectors first (S3 → Azure → GCS), tested fully locally via the three emulators — no account signups needed, and it's the piece that unblocks Delta/Iceberg work regardless of which cloud.
+2. Delta Lake / Iceberg on top of that, starting with the DuckDB-vs-Python-subprocess feasibility spike.
+3. Snowflake and Databricks last, since both are blocked on you creating real trial accounts for live verification — worth sequencing after the object-storage work so that's not sitting idle waiting on an external signup.
