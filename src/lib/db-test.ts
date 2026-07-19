@@ -1,4 +1,20 @@
+import { isIP } from 'net';
 import type { ConnectorType } from '@/types';
+
+// tedious (the mssql driver) picks the TLS SNI servername from two different
+// code paths that disagree on IP hosts: one correctly falls back to an empty
+// string for an IP literal, the other doesn't and hands Node's tls module the
+// raw IP, which it rejects ("Setting the TLS ServerName to an IP address is
+// not permitted"). Forcing an explicit non-IP serverName short-circuits both
+// paths; the actual value is inert since trustServerCertificate skips
+// hostname verification.
+export function mssqlOptions(host: string): { encrypt: boolean; trustServerCertificate: boolean; serverName?: string } {
+  return {
+    encrypt: true,
+    trustServerCertificate: true,
+    ...(isIP(host) ? { serverName: 'sqlserver' } : {}),
+  };
+}
 
 export interface DbTestInput {
   type: ConnectorType;
@@ -35,7 +51,7 @@ async function testMssql(input: DbTestInput): Promise<DbTestResult> {
     user: input.username,
     password: input.password,
     connectionTimeout: TIMEOUT_MS,
-    options: { encrypt: true, trustServerCertificate: true },
+    options: mssqlOptions(input.host),
   });
   try {
     await withTimeout(pool.connect(), TIMEOUT_MS);

@@ -1,4 +1,4 @@
-import type { DbTestInput } from './db-test';
+import { mssqlOptions, type DbTestInput } from './db-test';
 
 export interface ColumnInfo {
   name: string;
@@ -13,7 +13,7 @@ async function listTablesMssql(input: DbTestInput): Promise<string[]> {
   const pool = new sql.ConnectionPool({
     server: input.host, port: input.port || 1433, database: input.database,
     user: input.username, password: input.password, connectionTimeout: TIMEOUT_MS,
-    options: { encrypt: true, trustServerCertificate: true },
+    options: mssqlOptions(input.host),
   });
   try {
     await pool.connect();
@@ -76,7 +76,7 @@ async function getColumnsMssql(input: DbTestInput, tableName: string): Promise<C
   const pool = new sql.ConnectionPool({
     server: input.host, port: input.port || 1433, database: input.database,
     user: input.username, password: input.password, connectionTimeout: TIMEOUT_MS,
-    options: { encrypt: true, trustServerCertificate: true },
+    options: mssqlOptions(input.host),
   });
   try {
     await pool.connect();

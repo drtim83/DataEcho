@@ -1,4 +1,4 @@
-import type { DbTestInput } from './db-test';
+import { mssqlOptions, type DbTestInput } from './db-test';
 import type { ColumnMapping } from './schema-mapper';
 
 const TIMEOUT_MS = 15000;
@@ -21,7 +21,7 @@ async function extractMssql(input: DbTestInput, table: string, columns: string[]
   const pool = new sql.ConnectionPool({
     server: input.host, port: input.port || 1433, database: input.database,
     user: input.username, password: input.password, connectionTimeout: TIMEOUT_MS,
-    options: { encrypt: true, trustServerCertificate: true },
+    options: mssqlOptions(input.host),
   });
   try {
     await pool.connect();
@@ -82,7 +82,7 @@ async function extractAllColumnsMssql(input: DbTestInput, table: string): Promis
   const pool = new sql.ConnectionPool({
     server: input.host, port: input.port || 1433, database: input.database,
     user: input.username, password: input.password, connectionTimeout: TIMEOUT_MS,
-    options: { encrypt: true, trustServerCertificate: true },
+    options: mssqlOptions(input.host),
   });
   try {
     await pool.connect();
@@ -146,7 +146,7 @@ async function insertMssql(input: DbTestInput, table: string, columns: string[],
   const pool = new sql.ConnectionPool({
     server: input.host, port: input.port || 1433, database: input.database,
     user: input.username, password: input.password, connectionTimeout: TIMEOUT_MS,
-    options: { encrypt: true, trustServerCertificate: true },
+    options: mssqlOptions(input.host),
   });
   try {
     await pool.connect();
@@ -227,7 +227,7 @@ async function truncateMssql(input: DbTestInput, table: string): Promise<void> {
   const pool = new sql.ConnectionPool({
     server: input.host, port: input.port || 1433, database: input.database,
     user: input.username, password: input.password, connectionTimeout: TIMEOUT_MS,
-    options: { encrypt: true, trustServerCertificate: true },
+    options: mssqlOptions(input.host),
   });
   try {
     await pool.connect();
@@ -348,7 +348,7 @@ async function previewMssql(input: DbTestInput, table: string): Promise<Record<s
   const pool = new sql.ConnectionPool({
     server: input.host, port: input.port || 1433, database: input.database,
     user: input.username, password: input.password, connectionTimeout: TIMEOUT_MS,
-    options: { encrypt: true, trustServerCertificate: true },
+    options: mssqlOptions(input.host),
   });
   try {
     await pool.connect();
