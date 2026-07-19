@@ -66,12 +66,37 @@ async function extractMysql(input: DbTestInput, table: string, columns: string[]
   }
 }
 
+// Oracle stores/returns unquoted identifiers uppercase, so table/column names
+// here are deliberately left unquoted (not "wrapped") rather than quoted like
+// Postgres/MySQL — sanitizeIdentifier's character allowlist already makes
+// this injection-safe either way, and leaving them unquoted lets Oracle's
+// normal case-insensitive resolution match whatever case the user typed.
+async function extractOracle(input: DbTestInput, table: string, columns: string[]): Promise<Record<string, unknown>[]> {
+  const oracledb = await import('oracledb');
+  const safeTable = sanitizeIdentifier(table).join('.');
+  const colList = columns.map((c) => sanitizeIdentifier(c)[0]).join(', ');
+  const connection = await oracledb.getConnection({
+    user: input.username, password: input.password,
+    connectString: `${input.host}:${input.port || 1521}/${input.database}`,
+  });
+  try {
+    const result = await connection.execute<Record<string, unknown>>(
+      `SELECT ${colList} FROM ${safeTable} FETCH FIRST ${MAX_SYNC_ROWS} ROWS ONLY`,
+      [], { outFormat: oracledb.OUT_FORMAT_OBJECT }
+    );
+    return result.rows ?? [];
+  } finally {
+    await connection.close().catch(() => {});
+  }
+}
+
 export async function extractRows(input: DbTestInput, table: string, columns: string[]): Promise<Record<string, unknown>[]> {
   switch (input.type) {
     case 'mssql': return extractMssql(input, table, columns);
     case 'postgresql':
     case 'supabase': return extractPostgres(input, table, columns);
     case 'mysql': return extractMysql(input, table, columns);
+    case 'oracle': return extractOracle(input, table, columns);
     default: throw new Error(`Data extraction for ${input.type} is not implemented yet.`);
   }
 }
@@ -129,12 +154,31 @@ async function extractAllColumnsMysql(input: DbTestInput, table: string): Promis
 // already fully described by the pipeline's schema mapping), a joined
 // source's useful columns aren't known in advance, so every column comes
 // back and only the ones a mapping actually references end up loaded.
+async function extractAllColumnsOracle(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
+  const oracledb = await import('oracledb');
+  const safeTable = sanitizeIdentifier(table).join('.');
+  const connection = await oracledb.getConnection({
+    user: input.username, password: input.password,
+    connectString: `${input.host}:${input.port || 1521}/${input.database}`,
+  });
+  try {
+    const result = await connection.execute<Record<string, unknown>>(
+      `SELECT * FROM ${safeTable} FETCH FIRST ${MAX_SYNC_ROWS} ROWS ONLY`,
+      [], { outFormat: oracledb.OUT_FORMAT_OBJECT }
+    );
+    return result.rows ?? [];
+  } finally {
+    await connection.close().catch(() => {});
+  }
+}
+
 async function extractAllColumns(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
   switch (input.type) {
     case 'mssql': return extractAllColumnsMssql(input, table);
     case 'postgresql':
     case 'supabase': return extractAllColumnsPostgres(input, table);
     case 'mysql': return extractAllColumnsMysql(input, table);
+    case 'oracle': return extractAllColumnsOracle(input, table);
     default: throw new Error(`Data extraction for ${input.type} is not implemented yet.`);
   }
 }
@@ -211,12 +255,37 @@ async function insertMysql(input: DbTestInput, table: string, columns: string[],
   }
 }
 
+async function insertOracle(input: DbTestInput, table: string, columns: string[], rows: Record<string, unknown>[]): Promise<number> {
+  const oracledb = await import('oracledb');
+  const safeTable = sanitizeIdentifier(table).join('.');
+  const safeCols = columns.map((c) => sanitizeIdentifier(c)[0]);
+  const connection = await oracledb.getConnection({
+    user: input.username, password: input.password,
+    connectString: `${input.host}:${input.port || 1521}/${input.database}`,
+  });
+  try {
+    const colList = safeCols.join(', ');
+    const paramList = safeCols.map((c) => `:${c}`).join(', ');
+    let inserted = 0;
+    for (const row of rows) {
+      const binds: Record<string, string | number | boolean | Date | Buffer | null> = {};
+      safeCols.forEach((c) => { binds[c] = (row[c] ?? null) as string | number | boolean | Date | Buffer | null; });
+      await connection.execute(`INSERT INTO ${safeTable} (${colList}) VALUES (${paramList})`, binds, { autoCommit: true });
+      inserted += 1;
+    }
+    return inserted;
+  } finally {
+    await connection.close().catch(() => {});
+  }
+}
+
 export async function insertRows(input: DbTestInput, table: string, columns: string[], rows: Record<string, unknown>[]): Promise<number> {
   switch (input.type) {
     case 'mssql': return insertMssql(input, table, columns, rows);
     case 'postgresql':
     case 'supabase': return insertPostgres(input, table, columns, rows);
     case 'mysql': return insertMysql(input, table, columns, rows);
+    case 'oracle': return insertOracle(input, table, columns, rows);
     default: throw new Error(`Data loading for ${input.type} is not implemented yet.`);
   }
 }
@@ -267,12 +336,28 @@ async function truncateMysql(input: DbTestInput, table: string): Promise<void> {
   }
 }
 
+async function truncateOracle(input: DbTestInput, table: string): Promise<void> {
+  const oracledb = await import('oracledb');
+  const safeTable = sanitizeIdentifier(table).join('.');
+  const connection = await oracledb.getConnection({
+    user: input.username, password: input.password,
+    connectString: `${input.host}:${input.port || 1521}/${input.database}`,
+  });
+  try {
+    // TRUNCATE is DDL in Oracle and auto-commits implicitly.
+    await connection.execute(`TRUNCATE TABLE ${safeTable}`);
+  } finally {
+    await connection.close().catch(() => {});
+  }
+}
+
 async function truncateTable(input: DbTestInput, table: string): Promise<void> {
   switch (input.type) {
     case 'mssql': return truncateMssql(input, table);
     case 'postgresql':
     case 'supabase': return truncatePostgres(input, table);
     case 'mysql': return truncateMysql(input, table);
+    case 'oracle': return truncateOracle(input, table);
     default: throw new Error(`Truncate is not implemented for ${input.type}.`);
   }
 }
@@ -391,12 +476,31 @@ async function previewMysql(input: DbTestInput, table: string): Promise<Record<s
   }
 }
 
+async function previewOracle(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
+  const oracledb = await import('oracledb');
+  const safeTable = sanitizeIdentifier(table).join('.');
+  const connection = await oracledb.getConnection({
+    user: input.username, password: input.password,
+    connectString: `${input.host}:${input.port || 1521}/${input.database}`,
+  });
+  try {
+    const result = await connection.execute<Record<string, unknown>>(
+      `SELECT * FROM ${safeTable} FETCH FIRST ${PREVIEW_ROWS} ROWS ONLY`,
+      [], { outFormat: oracledb.OUT_FORMAT_OBJECT }
+    );
+    return result.rows ?? [];
+  } finally {
+    await connection.close().catch(() => {});
+  }
+}
+
 export async function previewTable(input: DbTestInput, table: string): Promise<Record<string, unknown>[]> {
   switch (input.type) {
     case 'mssql': return previewMssql(input, table);
     case 'postgresql':
     case 'supabase': return previewPostgres(input, table);
     case 'mysql': return previewMysql(input, table);
+    case 'oracle': return previewOracle(input, table);
     default: throw new Error(`Data preview for ${input.type} is not implemented yet.`);
   }
 }

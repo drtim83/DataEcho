@@ -83,6 +83,26 @@ async function testPostgres(input: DbTestInput): Promise<DbTestResult> {
   }
 }
 
+// input.database is treated as the Oracle service name (Easy Connect syntax:
+// host:port/serviceName), since Oracle has no separate "database" concept —
+// a service name identifies a pluggable database within an instance.
+async function testOracle(input: DbTestInput): Promise<DbTestResult> {
+  const oracledb = await import('oracledb');
+  const connection = await withTimeout(
+    oracledb.getConnection({
+      user: input.username,
+      password: input.password,
+      connectString: `${input.host}:${input.port || 1521}/${input.database}`,
+    }),
+    TIMEOUT_MS
+  );
+  try {
+    return { success: true, supported: true, message: 'Connection successful.', serverVersion: connection.oracleServerVersionString ?? undefined };
+  } finally {
+    await connection.close().catch(() => {});
+  }
+}
+
 async function testMysql(input: DbTestInput): Promise<DbTestResult> {
   const mysql = await import('mysql2/promise');
   const connection = await withTimeout(
@@ -106,7 +126,6 @@ async function testMysql(input: DbTestInput): Promise<DbTestResult> {
 }
 
 const UNSUPPORTED_MESSAGE: Partial<Record<ConnectorType, string>> = {
-  oracle: 'Live testing for Oracle DB is not implemented yet.',
   db2: 'Live testing for IBM DB2 is not implemented yet.',
   snowflake: 'Live testing for Snowflake is not implemented yet.',
   databricks: 'Live testing for Databricks is not implemented yet.',
@@ -130,6 +149,9 @@ export async function testConnection(input: DbTestInput): Promise<DbTestResult> 
         break;
       case 'mysql':
         result = await testMysql(input);
+        break;
+      case 'oracle':
+        result = await testOracle(input);
         break;
       default:
         return {

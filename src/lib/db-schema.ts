@@ -65,6 +65,26 @@ async function listTablesMysql(input: DbTestInput): Promise<string[]> {
   }
 }
 
+async function listTablesOracle(input: DbTestInput): Promise<string[]> {
+  const oracledb = await import('oracledb');
+  const connection = await oracledb.getConnection({
+    user: input.username, password: input.password,
+    connectString: `${input.host}:${input.port || 1521}/${input.database}`,
+  });
+  try {
+    // USER_TABLES scopes to tables owned by the connecting user, matching how
+    // Oracle equates "schema" with "user" (unlike Postgres/MySQL, where
+    // schema and user are independent).
+    const result = await connection.execute<{ TABLE_NAME: string }>(
+      `SELECT table_name AS "TABLE_NAME" FROM user_tables ORDER BY table_name`,
+      [], { outFormat: oracledb.OUT_FORMAT_OBJECT }
+    );
+    return (result.rows ?? []).map((r) => r.TABLE_NAME);
+  } finally {
+    await connection.close().catch(() => {});
+  }
+}
+
 function splitSchemaTable(tableName: string, defaultSchema: string): [string, string] {
   const parts = tableName.split('.');
   return parts.length > 1 ? [parts[0], parts[1]] : [defaultSchema, parts[0]];
@@ -133,12 +153,34 @@ async function getColumnsMysql(input: DbTestInput, tableName: string): Promise<C
   }
 }
 
+async function getColumnsOracle(input: DbTestInput, tableName: string): Promise<ColumnInfo[]> {
+  const oracledb = await import('oracledb');
+  // listTablesOracle only returns bare (unqualified) names for the connecting
+  // user, so a dot-qualified name here just means "take the table part".
+  const name = tableName.includes('.') ? tableName.split('.')[1] : tableName;
+  const connection = await oracledb.getConnection({
+    user: input.username, password: input.password,
+    connectString: `${input.host}:${input.port || 1521}/${input.database}`,
+  });
+  try {
+    const result = await connection.execute<{ COLUMN_NAME: string; DATA_TYPE: string; NULLABLE: string }>(
+      `SELECT column_name AS "COLUMN_NAME", data_type AS "DATA_TYPE", nullable AS "NULLABLE"
+       FROM user_tab_columns WHERE table_name = UPPER(:name) ORDER BY column_id`,
+      { name }, { outFormat: oracledb.OUT_FORMAT_OBJECT }
+    );
+    return (result.rows ?? []).map((r) => ({ name: r.COLUMN_NAME, type: r.DATA_TYPE, nullable: r.NULLABLE === 'Y' }));
+  } finally {
+    await connection.close().catch(() => {});
+  }
+}
+
 export async function listTables(input: DbTestInput): Promise<string[]> {
   switch (input.type) {
     case 'mssql': return listTablesMssql(input);
     case 'postgresql':
     case 'supabase': return listTablesPostgres(input);
     case 'mysql': return listTablesMysql(input);
+    case 'oracle': return listTablesOracle(input);
     default: throw new Error(`Schema introspection for ${input.type} is not implemented yet.`);
   }
 }
@@ -149,6 +191,7 @@ export async function getColumns(input: DbTestInput, tableName: string): Promise
     case 'postgresql':
     case 'supabase': return getColumnsPostgres(input, tableName);
     case 'mysql': return getColumnsMysql(input, tableName);
+    case 'oracle': return getColumnsOracle(input, tableName);
     default: throw new Error(`Schema introspection for ${input.type} is not implemented yet.`);
   }
 }
