@@ -13,8 +13,20 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       db.collection('pipeline_edges').where('pipeline_id', '==', id).get(),
     ]);
 
-    const nodes = nodesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-    const edges = edgesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const nodes = nodesSnap.docs.map((d) => {
+      const data = d.data();
+      return {
+        ...data,
+        id: typeof data.id === 'string' && data.id ? data.id : d.id,
+      };
+    });
+    const edges = edgesSnap.docs.map((d) => {
+      const data = d.data();
+      return {
+        ...data,
+        id: typeof data.id === 'string' && data.id ? data.id : d.id,
+      };
+    });
 
     return NextResponse.json({ nodes, edges });
   } catch (error) {
@@ -29,11 +41,12 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { id } = await params;
-    const body = await req.json();
-    const { nodes, edges } = body as {
-      nodes: { id: string; type: string; label: string; connector_type?: string; position_x: number; position_y: number; config?: Record<string, unknown> }[];
-      edges: { id: string; source_node: string; target_node: string; animated?: boolean }[];
+    const body = (await req.json()) as {
+      nodes?: { id: string; type: string; label: string; connector_type?: string; position_x: number; position_y: number; config?: Record<string, unknown> }[];
+      edges?: { id: string; source_node: string; target_node: string; animated?: boolean }[];
     };
+    const nodes = Array.isArray(body?.nodes) ? body.nodes : [];
+    const edges = Array.isArray(body?.edges) ? body.edges : [];
 
     // Replace-all is simplest and matches how the canvas UI saves (full snapshot each time).
     const [oldNodesSnap, oldEdgesSnap] = await Promise.all([
@@ -49,7 +62,9 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       for (let i = 0; i < nodes.length; i += 450) {
         const batch = db.batch();
         for (const n of nodes.slice(i, i + 450)) {
-          const ref = db.collection('pipeline_nodes').doc(n.id);
+          const ref = db
+            .collection('pipeline_nodes')
+            .doc(`p_${encodeURIComponent(id)}_${encodeURIComponent(n.id)}`);
           batch.set(ref, {
             id: n.id,
             pipeline_id: id,
@@ -69,7 +84,9 @@ export async function PUT(req: Request, { params }: { params: Promise<{ id: stri
       for (let i = 0; i < edges.length; i += 450) {
         const batch = db.batch();
         for (const e of edges.slice(i, i + 450)) {
-          const ref = db.collection('pipeline_edges').doc(e.id);
+          const ref = db
+            .collection('pipeline_edges')
+            .doc(`p_${encodeURIComponent(id)}_${encodeURIComponent(e.id)}`);
           batch.set(ref, {
             id: e.id,
             pipeline_id: id,

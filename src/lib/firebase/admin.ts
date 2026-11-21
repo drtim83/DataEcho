@@ -10,14 +10,25 @@ import {
 import { getAuth, type Auth } from 'firebase-admin/auth';
 import { getFirestore, type Firestore } from 'firebase-admin/firestore';
 
-let firestoreConfigured = false;
+const globalForFirebase = globalThis as typeof globalThis & {
+  __dataechoFirestoreConfigured?: boolean;
+};
 
 function parseServiceAccount(raw: string): ServiceAccount {
   const trimmed = raw.trim();
   const jsonStr = trimmed.startsWith('{')
     ? trimmed
     : Buffer.from(trimmed, 'base64').toString('utf8');
-  return JSON.parse(jsonStr) as ServiceAccount;
+  const parsed = JSON.parse(jsonStr) as ServiceAccount & {
+    private_key?: unknown;
+  };
+  if (typeof parsed.private_key === 'string') {
+    parsed.private_key = parsed.private_key.replace(/\\n/g, '\n');
+  }
+  if (typeof parsed.privateKey === 'string') {
+    parsed.privateKey = parsed.privateKey.replace(/\\n/g, '\n');
+  }
+  return parsed;
 }
 
 export function getAdminApp(): App {
@@ -56,9 +67,16 @@ export function getAdminAuth(): Auth {
 
 export function getAdminDb(): Firestore {
   const db = getFirestore(getAdminApp());
-  if (!firestoreConfigured) {
-    db.settings({ ignoreUndefinedProperties: true });
-    firestoreConfigured = true;
+  if (!globalForFirebase.__dataechoFirestoreConfigured) {
+    try {
+      db.settings({ ignoreUndefinedProperties: true });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (!msg.includes('already been initialized')) {
+        throw error;
+      }
+    }
+    globalForFirebase.__dataechoFirestoreConfigured = true;
   }
   return db;
 }

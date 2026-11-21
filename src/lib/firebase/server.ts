@@ -16,39 +16,50 @@ export interface UserProfile {
   created_at: string;
 }
 
+const EXPECTED_SESSION_ERRORS = new Set([
+  'auth/session-cookie-expired',
+  'auth/session-cookie-revoked',
+  'auth/invalid-session-cookie',
+  'auth/argument-error',
+  'auth/user-disabled',
+  'auth/user-not-found',
+]);
+
 export async function ensureUserProfile(
   db: Firestore,
   user: AppUser
 ): Promise<UserProfile> {
   const ref = db.collection('profiles').doc(user.id);
-  const snap = await ref.get();
-  if (snap.exists) {
-    const data = snap.data() as Omit<UserProfile, 'id'>;
-    return { id: snap.id, ...data };
-  }
-
   const initialAdminEmail = (
     process.env.INITIAL_ADMIN_EMAIL || 'admin@dataecho.com'
   ).toLowerCase();
   const isBootstrapAdminEmail =
     Boolean(user.email) && user.email!.toLowerCase() === initialAdminEmail;
 
-  let role: 'admin' | 'user' = isBootstrapAdminEmail ? 'admin' : 'user';
-  if (role === 'user') {
-    const existingProfiles = await db.collection('profiles').limit(1).get();
-    if (existingProfiles.empty) {
-      role = 'admin';
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    if (snap.exists) {
+      const data = snap.data() as Omit<UserProfile, 'id'>;
+      return { id: snap.id, ...data };
     }
-  }
 
-  const profileData: Omit<UserProfile, 'id'> = {
-    email: user.email ?? '',
-    role,
-    created_at: new Date().toISOString(),
-  };
+    let role: 'admin' | 'user' = isBootstrapAdminEmail ? 'admin' : 'user';
+    if (role === 'user') {
+      const existingProfiles = await tx.get(db.collection('profiles').limit(1));
+      if (existingProfiles.empty) {
+        role = 'admin';
+      }
+    }
 
-  await ref.set(profileData);
-  return { id: user.id, ...profileData };
+    const profileData: Omit<UserProfile, 'id'> = {
+      email: user.email ?? '',
+      role,
+      created_at: new Date().toISOString(),
+    };
+
+    tx.set(ref, profileData);
+    return { id: user.id, ...profileData };
+  });
 }
 
 export async function getSessionUser(): Promise<AppUser | null> {
@@ -65,7 +76,14 @@ export async function getSessionUser(): Promise<AppUser | null> {
       id: decoded.uid,
       email: decoded.email ?? null,
     };
-  } catch {
+  } catch (err) {
+    const code =
+      typeof err === 'object' && err !== null && 'code' in err
+        ? String((err as { code?: unknown }).code)
+        : '';
+    if (!EXPECTED_SESSION_ERRORS.has(code)) {
+      console.error('[DataEcho] getSessionUser failed:', err);
+    }
     return null;
   }
 }
