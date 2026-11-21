@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { signOut } from 'firebase/auth';
+import { getFirebaseAuth } from '@/lib/firebase/client';
 
 /* ────────── Clean SVG Icons (Lucide-style, 20×20) ────────── */
 const icons: Record<string, React.ReactNode> = {
@@ -104,8 +105,12 @@ export default function Sidebar({ userEmail, role }: { userEmail: string; role: 
   const [collapsed, setCollapsed] = useState(false);
 
   const handleLogout = async () => {
-    const supabase = createClient();
-    await supabase.auth.signOut();
+    try {
+      await signOut(getFirebaseAuth());
+    } catch {
+      // Ignore client signOut errors if auth is not initialized or already signed out
+    }
+    await fetch('/api/auth/session', { method: 'DELETE' }).catch(() => {});
     window.location.href = '/login';
   };
 

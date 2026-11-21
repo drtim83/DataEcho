@@ -1,21 +1,27 @@
 import { NextResponse } from 'next/server';
-import { requireUser, errorMessage } from '@/lib/supabase/server';
+import { requireUser, errorMessage } from '@/lib/firebase/server';
 
 export async function GET() {
   try {
-    const { supabase, user } = await requireUser();
+    const { db, user } = await requireUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { data, error } = await supabase
-      .from('billing_accounts')
-      .select('card_brand, card_last4, card_exp_month, card_exp_year, updated_at')
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const snap = await db.collection('billing_accounts').get();
+    const latest = snap.docs
+      .map((d) => d.data())
+      .sort((a, b) => String(b.updated_at ?? '').localeCompare(String(a.updated_at ?? '')))[0];
 
-    if (error) throw error;
+    const billing = latest
+      ? {
+          card_brand: latest.card_brand ?? null,
+          card_last4: latest.card_last4 ?? null,
+          card_exp_month: latest.card_exp_month ?? null,
+          card_exp_year: latest.card_exp_year ?? null,
+          updated_at: latest.updated_at ?? null,
+        }
+      : null;
 
-    return NextResponse.json({ billing: data });
+    return NextResponse.json({ billing });
   } catch (error) {
     console.error('GET /api/billing/status failed:', error);
     return NextResponse.json({ error: errorMessage(error, 'Failed to load billing status') }, { status: 500 });

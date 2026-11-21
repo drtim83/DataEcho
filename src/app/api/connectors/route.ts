@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireUser, requireAdmin, errorMessage } from '@/lib/supabase/server';
+import { requireUser, requireAdmin, errorMessage } from '@/lib/firebase/server';
 import { encrypt } from '@/lib/crypto';
 import { logAudit } from '@/lib/audit';
 import { syncConnectorQuantity } from '@/lib/billing-helpers';
@@ -37,17 +37,16 @@ function toConnector(row: ConnectorRow): Connector {
 
 export async function GET() {
   try {
-    const { supabase, user } = await requireUser();
+    const { db, user } = await requireUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { data, error } = await supabase
-      .from('connectors')
-      .select('id, name, type, category, role, config, status, tables_count, last_accessed, created_at')
-      .order('created_at', { ascending: false });
+    const snap = await db.collection('connectors').orderBy('created_at', 'desc').get();
+    const rows: ConnectorRow[] = snap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<ConnectorRow, 'id'>),
+    }));
 
-    if (error) throw error;
-
-    return NextResponse.json({ connectors: (data as ConnectorRow[]).map(toConnector) });
+    return NextResponse.json({ connectors: rows.map(toConnector) });
   } catch (error) {
     console.error('GET /api/connectors failed:', error);
     return NextResponse.json({ error: errorMessage(error, 'Failed to load connectors') }, { status: 500 });
@@ -56,7 +55,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const { supabase, user, admin } = await requireAdmin();
+    const { db, user, admin } = await requireAdmin();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (!admin) return NextResponse.json({ error: 'Only admins can manage connectors' }, { status: 403 });
 
@@ -70,38 +69,41 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'role must be "source", "target", or "both"' }, { status: 400 });
     }
 
-    const { data, error } = await supabase
-      .from('connectors')
-      .insert({
-        name,
-        type,
-        category,
-        role: role || 'both',
-        status: status || 'configuring',
-        config: {
-          host,
-          port: port ? Number(port) : undefined,
-          database,
-          username,
-          password: password ? encrypt(password) : undefined,
-        },
-        last_accessed: new Date().toISOString(),
-      })
-      .select('id, name, type, category, role, config, status, tables_count, last_accessed, created_at')
-      .single();
+    const now = new Date().toISOString();
+    const docData = {
+      name,
+      type,
+      category,
+      role: role || 'both',
+      status: status || 'configuring',
+      tables_count: 0,
+      config: {
+        host,
+        port: port ? Number(port) : undefined,
+        database,
+        username,
+        password: password ? encrypt(password) : undefined,
+      },
+      last_accessed: now,
+      created_at: now,
+    };
 
-    if (error) throw error;
+    const ref = await db.collection('connectors').add(docData);
+    const created: ConnectorRow = {
+      id: ref.id,
+      ...(docData as Omit<ConnectorRow, 'id'>),
+    };
 
-    await logAudit(supabase, {
+    await logAudit(db, {
       action: 'connector.create',
       actor: user.email ?? user.id,
       status: 'success',
       details: `Created connector "${name}" (${type})`,
     });
 
-    await syncConnectorQuantity(supabase);
+    await syncConnectorQuantity(db);
 
-    return NextResponse.json({ connector: toConnector(data as ConnectorRow) }, { status: 201 });
+    return NextResponse.json({ connector: toConnector(created) }, { status: 201 });
   } catch (error) {
     console.error('POST /api/connectors failed:', error);
     return NextResponse.json({ error: errorMessage(error, 'Failed to create connector') }, { status: 500 });

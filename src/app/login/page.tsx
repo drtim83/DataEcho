@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { createClient } from '@/lib/supabase/client';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { getFirebaseAuth } from '@/lib/firebase/client';
 
 const PARTICLE_COLORS = ['var(--color-accent-blue)', 'var(--color-accent-teal)', 'var(--color-accent-purple)'];
 
@@ -25,6 +26,12 @@ export default function LoginPage() {
 
   useEffect(() => {
     setMounted(true);
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('expired') === '1') {
+        fetch('/api/auth/session', { method: 'DELETE' }).catch(() => {});
+      }
+    }
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -32,17 +39,29 @@ export default function LoginPage() {
     setError('');
     setLoading(true);
 
-    const supabase = createClient();
-    const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-
-    if (signInError) {
-      setError(signInError.message);
+    try {
+      const credential = await signInWithEmailAndPassword(
+        getFirebaseAuth(),
+        email.trim(),
+        password
+      );
+      const idToken = await credential.user.getIdToken();
+      const res = await fetch('/api/auth/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to establish session');
+      }
+      // Full reload so the proxy/server components pick up the new session cookie.
+      window.location.href = '/';
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sign in failed');
       setShaking(true);
       setTimeout(() => setShaking(false), 500);
       setLoading(false);
-    } else {
-      // Full reload so the proxy/server components pick up the new session cookie.
-      window.location.href = '/';
     }
   };
 

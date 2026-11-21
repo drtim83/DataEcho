@@ -1,21 +1,16 @@
 import { NextResponse } from 'next/server';
-import { requireAdmin, errorMessage } from '@/lib/supabase/server';
+import { requireAdmin, errorMessage } from '@/lib/firebase/server';
+import { getLatestBillingAccount } from '@/lib/billing-helpers';
 import { getStripe } from '@/lib/stripe';
 
 export async function POST() {
   try {
-    const { supabase, user, admin } = await requireAdmin();
+    const { db, user, admin } = await requireAdmin();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (!admin) return NextResponse.json({ error: 'Only admins can manage billing' }, { status: 403 });
 
     const stripe = getStripe();
-
-    const { data: existing } = await supabase
-      .from('billing_accounts')
-      .select('stripe_customer_id')
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const existing = await getLatestBillingAccount(db);
 
     const customerId = existing?.stripe_customer_id
       || (await stripe.customers.create({ email: user.email ?? undefined, name: 'DataEcho' })).id;

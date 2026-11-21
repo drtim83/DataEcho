@@ -1,35 +1,38 @@
 import { NextResponse } from 'next/server';
-import { requireAdmin, errorMessage } from '@/lib/supabase/server';
+import { requireAdmin, errorMessage } from '@/lib/firebase/server';
+import { isConnectorReferenced } from '@/lib/firebase/db-helpers';
 import { logAudit } from '@/lib/audit';
 import { syncConnectorQuantity } from '@/lib/billing-helpers';
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { supabase, user, admin } = await requireAdmin();
+    const { db, user, admin } = await requireAdmin();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (!admin) return NextResponse.json({ error: 'Only admins can manage connectors' }, { status: 403 });
 
     const { id } = await params;
 
-    const { data: existing } = await supabase.from('connectors').select('name').eq('id', id).single();
-
-    const { error } = await supabase.from('connectors').delete().eq('id', id);
-    if (error) {
-      // Postgres foreign_key_violation — a pipeline still references this connector.
-      if (error.code === '23503') {
-        return NextResponse.json({ error: 'This connector is still used by one or more pipelines. Delete those pipelines first.' }, { status: 409 });
-      }
-      throw error;
+    if (await isConnectorReferenced(db, id)) {
+      return NextResponse.json(
+        { error: 'This connector is still used by one or more pipelines. Delete those pipelines first.' },
+        { status: 409 }
+      );
     }
 
-    await logAudit(supabase, {
+    const ref = db.collection('connectors').doc(id);
+    const existingSnap = await ref.get();
+    const existingName = existingSnap.exists ? (existingSnap.data()?.name as string | undefined) : undefined;
+
+    await ref.delete();
+
+    await logAudit(db, {
       action: 'connector.delete',
       actor: user.email ?? user.id,
       status: 'success',
-      details: existing?.name ? `Deleted connector "${existing.name}"` : `Deleted connector ${id}`,
+      details: existingName ? `Deleted connector "${existingName}"` : `Deleted connector ${id}`,
     });
 
-    await syncConnectorQuantity(supabase);
+    await syncConnectorQuantity(db);
 
     return NextResponse.json({ success: true });
   } catch (error) {

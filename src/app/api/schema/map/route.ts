@@ -1,17 +1,20 @@
 import { NextResponse } from 'next/server';
-import { requireUser, errorMessage } from '@/lib/supabase/server';
+import { requireUser, errorMessage } from '@/lib/firebase/server';
 import { runSchemaMapping, PipelineActionError } from '@/lib/pipeline-actions';
 
 export async function GET(req: Request) {
   try {
-    const { supabase, user } = await requireUser();
+    const { db, user } = await requireUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const pipelineId = new URL(req.url).searchParams.get('pipeline_id');
     if (!pipelineId) return NextResponse.json({ error: 'pipeline_id is required' }, { status: 400 });
 
-    const { data, error } = await supabase.from('schema_mappings').select('*').eq('pipeline_id', pipelineId);
-    if (error) throw error;
+    const snap = await db
+      .collection('schema_mappings')
+      .where('pipeline_id', '==', pipelineId)
+      .get();
+    const data = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
     return NextResponse.json({ mappings: data });
   } catch (error) {
@@ -22,13 +25,13 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
-    const { supabase, user } = await requireUser();
+    const { db, user } = await requireUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { pipeline_id } = await req.json();
     if (!pipeline_id) return NextResponse.json({ error: 'pipeline_id is required' }, { status: 400 });
 
-    const { mappings } = await runSchemaMapping(supabase, user, pipeline_id);
+    const { mappings } = await runSchemaMapping(db, user, pipeline_id);
 
     return NextResponse.json({ mappings });
   } catch (error) {

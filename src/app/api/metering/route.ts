@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireUser, errorMessage } from '@/lib/supabase/server';
+import { requireUser, errorMessage } from '@/lib/firebase/server';
 
 interface MeteringRow {
   id: string;
@@ -18,19 +18,22 @@ function dayKey(iso: string): string {
 
 export async function GET() {
   try {
-    const { supabase, user } = await requireUser();
+    const { db, user } = await requireUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const [{ data: eventsData, error: eventsError }, { data: pipelinesData, error: pipelinesError }] = await Promise.all([
-      supabase.from('metering_events').select('*').order('timestamp', { ascending: true }),
-      supabase.from('pipelines').select('id, name, direction'),
+    const [eventsSnap, pipelinesSnap] = await Promise.all([
+      db.collection('metering_events').orderBy('timestamp', 'asc').get(),
+      db.collection('pipelines').get(),
     ]);
 
-    if (eventsError) throw eventsError;
-    if (pipelinesError) throw pipelinesError;
-
-    const events = (eventsData || []) as MeteringRow[];
-    const pipelines = pipelinesData || [];
+    const events: MeteringRow[] = eventsSnap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<MeteringRow, 'id'>),
+    }));
+    const pipelines = pipelinesSnap.docs.map((d) => {
+      const p = d.data();
+      return { id: d.id, name: p.name as string, direction: p.direction as string };
+    });
     const pipelineById = new Map(pipelines.map((p) => [p.id, p]));
 
     const totalCost = events.reduce((s, e) => s + e.cost_usd, 0);

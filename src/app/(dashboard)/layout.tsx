@@ -1,22 +1,22 @@
 import { redirect } from 'next/navigation';
-import { createClient } from '@/lib/supabase/server';
+import { getAdminDb } from '@/lib/firebase/admin';
+import { ensureUserProfile, getSessionUser } from '@/lib/firebase/server';
 import Sidebar from '@/components/layout/Sidebar';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const user = await getSessionUser();
 
-  // The proxy already redirects unauthenticated requests before they reach here;
-  // this is defense in depth in case that ever changes.
+  // The proxy checks cookie presence/expiry; this verifies the session cookie
+  // cryptographically via Firebase Admin before rendering protected pages.
   if (!user) {
-    redirect('/login');
+    redirect('/login?expired=1');
   }
 
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+  const profile = await ensureUserProfile(getAdminDb(), user);
 
   return (
     <div className="min-h-screen" style={{ background: 'var(--color-bg-primary)' }}>
-      <Sidebar userEmail={user.email ?? ''} role={profile?.role ?? 'user'} />
+      <Sidebar userEmail={user.email ?? ''} role={profile.role ?? 'user'} />
       <main className="ml-[240px] min-h-screen page-enter">
         {children}
       </main>

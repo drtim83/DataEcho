@@ -1,21 +1,31 @@
 import { NextResponse } from 'next/server';
-import { requireUser, errorMessage } from '@/lib/supabase/server';
+import { requireUser, errorMessage } from '@/lib/firebase/server';
 
 export async function GET() {
   try {
-    const { supabase, user } = await requireUser();
+    const { db, user } = await requireUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const [{ data: runs, error: runsError }, { data: pipelines, error: pipelinesError }] = await Promise.all([
-      supabase.from('sync_runs').select('*').order('started_at', { ascending: false }).limit(50),
-      supabase.from('pipelines').select('id, name, direction'),
+    const [runsSnap, pipelinesSnap] = await Promise.all([
+      db.collection('sync_runs').orderBy('started_at', 'desc').limit(50).get(),
+      db.collection('pipelines').get(),
     ]);
 
-    if (runsError) throw runsError;
-    if (pipelinesError) throw pipelinesError;
+    const pipelineById = new Map(
+      pipelinesSnap.docs.map((d) => {
+        const p = d.data();
+        return [d.id, { id: d.id, name: p.name as string, direction: p.direction as string }];
+      })
+    );
 
-    const pipelineById = new Map((pipelines || []).map((p) => [p.id, p]));
-    const enriched = (runs || []).map((r) => ({ ...r, pipeline: pipelineById.get(r.pipeline_id) }));
+    const enriched = runsSnap.docs.map((d) => {
+      const r = d.data();
+      return {
+        id: d.id,
+        ...r,
+        pipeline: pipelineById.get(r.pipeline_id as string),
+      };
+    });
 
     return NextResponse.json({ runs: enriched });
   } catch (error) {

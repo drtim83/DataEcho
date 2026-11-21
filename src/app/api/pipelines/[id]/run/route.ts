@@ -1,15 +1,15 @@
 import { NextResponse } from 'next/server';
-import { requireUser, errorMessage } from '@/lib/supabase/server';
+import { requireUser, errorMessage } from '@/lib/firebase/server';
 import { runPipelineSync, PipelineActionError } from '@/lib/pipeline-actions';
 
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { supabase, user } = await requireUser();
+    const { db, user } = await requireUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { id } = await params;
 
-    const { run, syncResult, runError } = await runPipelineSync(supabase, user, id);
+    const { run, syncResult, runError } = await runPipelineSync(db, user, id);
 
     if (runError) {
       return NextResponse.json({ error: runError, run }, { status: 500 });

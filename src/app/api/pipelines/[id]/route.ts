@@ -1,23 +1,24 @@
 import { NextResponse } from 'next/server';
-import { requireUser, errorMessage } from '@/lib/supabase/server';
+import { requireUser, errorMessage } from '@/lib/firebase/server';
+import { deletePipelineCascade } from '@/lib/firebase/db-helpers';
 import { logAudit } from '@/lib/audit';
 
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { supabase, user } = await requireUser();
+    const { db, user } = await requireUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { id } = await params;
-    const { data: existing } = await supabase.from('pipelines').select('name').eq('id', id).single();
+    const existingSnap = await db.collection('pipelines').doc(id).get();
+    const existingName = existingSnap.exists ? (existingSnap.data()?.name as string | undefined) : undefined;
 
-    const { error } = await supabase.from('pipelines').delete().eq('id', id);
-    if (error) throw error;
+    await deletePipelineCascade(db, id);
 
-    await logAudit(supabase, {
+    await logAudit(db, {
       action: 'pipeline.delete',
       actor: user.email ?? user.id,
       status: 'success',
-      details: existing?.name ? `Deleted pipeline "${existing.name}"` : `Deleted pipeline ${id}`,
+      details: existingName ? `Deleted pipeline "${existingName}"` : `Deleted pipeline ${id}`,
     });
 
     return NextResponse.json({ success: true });

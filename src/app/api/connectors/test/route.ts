@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireAdmin, errorMessage } from '@/lib/supabase/server';
+import { requireAdmin, errorMessage } from '@/lib/firebase/server';
 import { testConnection } from '@/lib/db-test';
 import type { ConnectorType } from '@/types';
 

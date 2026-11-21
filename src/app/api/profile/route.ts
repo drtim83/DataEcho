@@ -1,15 +1,16 @@
 import { NextResponse } from 'next/server';
-import { requireUser, errorMessage } from '@/lib/supabase/server';
+import { ensureUserProfile, requireUser, errorMessage } from '@/lib/firebase/server';
 
 export async function GET() {
   try {
-    const { supabase, user } = await requireUser();
+    const { db, user } = await requireUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { data, error } = await supabase.from('profiles').select('id, email, role').eq('id', user.id).single();
-    if (error) throw error;
+    const profile = await ensureUserProfile(db, user);
 
-    return NextResponse.json({ profile: data });
+    return NextResponse.json({
+      profile: { id: profile.id, email: profile.email, role: profile.role },
+    });
   } catch (error) {
     console.error('GET /api/profile failed:', error);
     return NextResponse.json({ error: errorMessage(error, 'Failed to load profile') }, { status: 500 });

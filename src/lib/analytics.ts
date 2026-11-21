@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Firestore } from 'firebase-admin/firestore';
 
 interface SyncRunRow {
   id: string;
@@ -32,20 +32,25 @@ function dayKey(iso: string): string {
 // Shared by the /api/analytics route and the MCP get_analytics tool so both
 // surfaces report the same real, freshly-computed numbers rather than one
 // duplicating (and potentially drifting from) the other's aggregation logic.
-export async function computeAnalytics(supabase: SupabaseClient) {
-  const [{ data: runsData, error: runsError }, { data: pipelinesData, error: pipelinesError }, { data: connectorsData, error: connectorsError }] = await Promise.all([
-    supabase.from('sync_runs').select('id, pipeline_id, direction, status, records, started_at, completed_at').order('started_at', { ascending: true }),
-    supabase.from('pipelines').select('id, name, source_id, target_id, direction, status'),
-    supabase.from('connectors').select('id, name, type'),
+export async function computeAnalytics(db: Firestore) {
+  const [runsSnap, pipelinesSnap, connectorsSnap] = await Promise.all([
+    db.collection('sync_runs').orderBy('started_at', 'asc').get(),
+    db.collection('pipelines').get(),
+    db.collection('connectors').get(),
   ]);
 
-  if (runsError) throw runsError;
-  if (pipelinesError) throw pipelinesError;
-  if (connectorsError) throw connectorsError;
-
-  const runs = (runsData || []) as SyncRunRow[];
-  const pipelines = (pipelinesData || []) as PipelineRow[];
-  const connectors = (connectorsData || []) as ConnectorRow[];
+  const runs: SyncRunRow[] = runsSnap.docs.map((d) => ({
+    id: d.id,
+    ...(d.data() as Omit<SyncRunRow, 'id'>),
+  }));
+  const pipelines: PipelineRow[] = pipelinesSnap.docs.map((d) => ({
+    id: d.id,
+    ...(d.data() as Omit<PipelineRow, 'id'>),
+  }));
+  const connectors: ConnectorRow[] = connectorsSnap.docs.map((d) => ({
+    id: d.id,
+    ...(d.data() as Omit<ConnectorRow, 'id'>),
+  }));
 
   const completedRuns = runs.filter((r) => r.status === 'completed');
   const latencies = completedRuns
