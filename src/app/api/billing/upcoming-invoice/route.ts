@@ -1,19 +1,17 @@
 import { NextResponse } from 'next/server';
-import { requireUser, errorMessage } from '@/lib/supabase/server';
+import { requireUser, errorMessage } from '@/lib/firebase/server';
 import { getStripe } from '@/lib/stripe';
 
 export async function GET() {
   try {
-    const { supabase, user } = await requireUser();
+    const { db, user } = await requireUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { data: billing } = await supabase
-      .from('billing_accounts')
-      .select('stripe_customer_id, stripe_subscription_id')
-      .not('stripe_subscription_id', 'is', null)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    const snap = await db.collection('billing_accounts').get();
+    const billing = snap.docs
+      .map((d) => d.data())
+      .filter((d) => Boolean(d.stripe_subscription_id))
+      .sort((a, b) => String(b.updated_at ?? '').localeCompare(String(a.updated_at ?? '')))[0];
 
     if (!billing?.stripe_customer_id || !billing?.stripe_subscription_id) {
       return NextResponse.json({ invoice: null });
@@ -21,8 +19,8 @@ export async function GET() {
 
     const stripe = getStripe();
     const invoice = await stripe.invoices.createPreview({
-      customer: billing.stripe_customer_id,
-      subscription: billing.stripe_subscription_id,
+      customer: billing.stripe_customer_id as string,
+      subscription: billing.stripe_subscription_id as string,
     });
 
     return NextResponse.json({

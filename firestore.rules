@@ -1,0 +1,274 @@
+rules_version = '2';
+
+// ===============================================================
+// DataEcho — Cloud Firestore Security Rules (Server-Only Posture)
+// ===============================================================
+//
+// Architecture & Why All Client Access Is Denied:
+// - DataEcho is a Next.js 16 application where ALL Cloud Firestore reads and
+//   writes execute strictly server-side inside Next.js Route Handlers and Server
+//   Components via the Firebase Admin SDK (`firebase-admin`).
+// - End users authenticate via the Firebase Auth client SDK (email/password) to
+//   obtain an ID token, which is exchanged server-side for an HTTP-only Firebase
+//   Auth session cookie. Server-side handlers verify the session cookie and
+//   enforce workspace authorization via `requireUser()` and `requireAdmin()`.
+// - The browser client NEVER imports or invokes the Cloud Firestore client SDK.
+// - Because the Firebase Admin SDK authenticates using Google Cloud IAM
+//   service credentials, it bypasses Firestore Security Rules completely.
+//   Setting `allow read, write: if false;` across every collection and the
+//   default catch-all therefore blocks 100% of direct browser/client SDK
+//   requests (authenticated or unauthenticated) without impacting server-side
+//   application functionality.
+// - Critical assets protected by this deny-all client posture include:
+//     * `connectors`: AES-256-GCM encrypted DB passwords (`config.password`),
+//       usernames, hosts, ports, and database names.
+//     * `billing_accounts`: Stripe customer, subscription, subscription item,
+//       and payment method IDs.
+//     * `profiles`: User email addresses (PII) and RBAC roles (`admin` / `user`),
+//       preventing profile enumeration and client-side role self-escalation.
+//     * Pipeline, mapping, sync, metering, and audit collections: prevents
+//       unauthorized workspace reads, pipeline tampering, metering manipulation,
+//       and audit log forgery.
+//
+// ===============================================================
+// Assumed Data Model (Managed Exclusively via firebase-admin)
+// ===============================================================
+//
+// Collection: profiles
+// Document ID: {uid} (Firebase Auth UID)
+// Fields:
+//   - id: string (required, immutable, matches Firebase Auth UID)
+//   - email: string (required, PII — user email address)
+//   - role: string (required, 'admin' | 'user' — server-enforced RBAC role)
+//   - created_at: timestamp | string (required, immutable)
+//
+// Collection: connectors
+// Document ID: {connectorId}
+// Fields:
+//   - name: string (required)
+//   - type: string (required, 'mssql' | 'oracle' | 'db2' | 'postgresql' | 'mysql' | 'supabase' | 's3' | 'azure_blob' | 'gcs' | 'snowflake' | 'databricks' | 'iceberg' | 'salesforce' | 'hubspot' | 'stripe')
+//   - category: string (required, 'on_prem' | 'cloud' | 'saas')
+//   - role: string (required, 'source' | 'target' | 'both')
+//   - config: map (required, sensitive — { host?: string, port?: number, database?: string, username?: string, password?: string [AES-256-GCM encrypted] })
+//   - status: string (required, 'connected' | 'error' | 'disconnected' | 'configuring')
+//   - tables_count: number (optional, integer >= 0)
+//   - last_accessed: timestamp | string (optional)
+//   - created_at: timestamp | string (required, immutable)
+//
+// Collection: pipelines
+// Document ID: {pipelineId}
+// Fields:
+//   - name: string (required)
+//   - source_id: string (required, references connectors/{connectorId})
+//   - target_id: string (required, references connectors/{connectorId})
+//   - source_table: string (optional, required before sync/mapping)
+//   - target_table: string (optional, required before sync/mapping)
+//   - direction: string (required, 'cloud_bound' | 'on_prem_bound' | 'bidirectional')
+//   - status: string (required, 'active' | 'paused' | 'error' | 'draft')
+//   - sync_mode: string (required, 'append' | 'truncate_reload')
+//   - created_at: timestamp | string (required, immutable)
+//
+// Collection: pipeline_nodes
+// Document ID: {nodeId}
+// Fields:
+//   - pipeline_id: string (required, references pipelines/{pipelineId})
+//   - type: string (required, 'source' | 'target' | 'transform' | 'filter')
+//   - label: string (required)
+//   - connector_type: string (optional)
+//   - position_x: number (required, float)
+//   - position_y: number (required, float)
+//   - config: map (required)
+//
+// Collection: pipeline_edges
+// Document ID: {edgeId}
+// Fields:
+//   - pipeline_id: string (required, references pipelines/{pipelineId})
+//   - source_node: string (required, references pipeline_nodes/{nodeId})
+//   - target_node: string (required, references pipeline_nodes/{nodeId})
+//   - animated: bool (required)
+//
+// Collection: pipeline_sources
+// Document ID: {sourceDocId}
+// Fields:
+//   - pipeline_id: string (required, references pipelines/{pipelineId})
+//   - source_id: string (required, references connectors/{connectorId})
+//   - source_table: string (required)
+//   - combine_mode: string (required, 'union' | 'join')
+//   - join_type: string (required, 'inner' | 'left')
+//   - join_column: string (optional, required when combine_mode == 'join')
+//   - primary_join_column: string (optional, required when combine_mode == 'join')
+//   - created_at: timestamp | string (required, immutable)
+//
+// Collection: pipeline_destinations
+// Document ID: {destinationId}
+// Fields:
+//   - pipeline_id: string (required, references pipelines/{pipelineId})
+//   - target_id: string (required, references connectors/{connectorId})
+//   - target_table: string (required)
+//   - filter_column: string (required)
+//   - filter_operator: string (required, '=' | '!=' | '>' | '<' | '>=' | '<=' | 'contains')
+//   - filter_value: string (required)
+//   - match_mode: string (required, 'all' | 'any')
+//   - created_at: timestamp | string (required, immutable)
+//
+// Collection: pipeline_destination_conditions
+// Document ID: {conditionId}
+// Fields:
+//   - destination_id: string (required, references pipeline_destinations/{destinationId})
+//   - filter_column: string (required)
+//   - filter_operator: string (required, '=' | '!=' | '>' | '<' | '>=' | '<=' | 'contains')
+//   - filter_value: string (required)
+//   - created_at: timestamp | string (required, immutable)
+//
+// Collection: schema_mappings
+// Document ID: {mappingId}
+// Fields:
+//   - pipeline_id: string (required, references pipelines/{pipelineId})
+//   - source_col: string (required)
+//   - target_col: string (required)
+//   - source_type: string (required)
+//   - target_type: string (required)
+//   - ai_confidence: number (required, float)
+//   - ai_warning: string (optional)
+//
+// Collection: sync_runs
+// Document ID: {runId}
+// Fields:
+//   - pipeline_id: string (required, references pipelines/{pipelineId})
+//   - job_id: string (optional)
+//   - direction: string (required, 'cloud_bound' | 'on_prem_bound' | 'bidirectional')
+//   - status: string (required, 'pending' | 'running' | 'completed' | 'failed' | 'cancelled')
+//   - records: number (required, integer >= 0)
+//   - started_at: timestamp | string (required)
+//   - completed_at: timestamp | string (optional)
+//   - error: string (optional)
+//
+// Collection: metering_events
+// Document ID: {eventId}
+// Fields:
+//   - pipeline_id: string (optional, references pipelines/{pipelineId})
+//   - direction: string (required, 'cloud_bound' | 'on_prem_bound' | 'bidirectional')
+//   - records: number (required, integer >= 0)
+//   - bytes: number (required, integer >= 0)
+//   - compute_ms: number (required, integer >= 0)
+//   - cost_usd: number (required, float >= 0)
+//   - timestamp: timestamp | string (required)
+//
+// Collection: audit_logs
+// Document ID: {logId}
+// Fields:
+//   - pipeline_id: string (optional, references pipelines/{pipelineId})
+//   - action: string (required)
+//   - actor: string (required, user email or UID)
+//   - details: string (optional)
+//   - records_affected: number (optional, integer >= 0)
+//   - status: string (required, 'success' | 'warning' | 'error' | 'info')
+//   - timestamp: timestamp | string (required)
+//
+// Collection: billing_accounts
+// Document ID: {billingAccountId}
+// Fields:
+//   - stripe_customer_id: string (required, sensitive Stripe customer ID)
+//   - default_payment_method_id: string (optional, sensitive Stripe payment method ID)
+//   - stripe_subscription_id: string (optional, sensitive Stripe subscription ID)
+//   - connector_item_id: string (optional, sensitive Stripe subscription item ID)
+//   - usage_item_id: string (optional, sensitive Stripe metered item ID)
+//   - card_brand: string (optional)
+//   - card_last4: string (optional)
+//   - card_exp_month: number (optional, integer)
+//   - card_exp_year: number (optional, integer)
+//   - updated_at: timestamp | string (required)
+//
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // User profiles hold PII (email) and server-enforced RBAC roles ('admin' | 'user').
+    // Direct client SDK access is denied to prevent user enumeration and privilege escalation;
+    // Admin SDK bypasses rules for server-side requireUser() / requireAdmin() and team routes.
+    match /profiles/{profileId} {
+      allow read, write: if false;
+    }
+
+    // Connectors store database host/username and AES-256-GCM encrypted credentials (`config.password`).
+    // Direct client SDK access is denied to prevent credential exfiltration or tampering;
+    // Admin SDK bypasses rules for server-side admin-only connector routes and sync execution.
+    match /connectors/{connectorId} {
+      allow read, write: if false;
+    }
+
+    // Pipelines define source/target connectors, tables, direction, and sync_mode.
+    // Direct client SDK access is denied; Admin SDK bypasses rules for server-side API routes.
+    match /pipelines/{pipelineId} {
+      allow read, write: if false;
+    }
+
+    // Visual canvas nodes belong to pipelines and are replaced atomically via server-side API routes.
+    // Direct client SDK access is denied; Admin SDK bypasses rules.
+    match /pipeline_nodes/{nodeId} {
+      allow read, write: if false;
+    }
+
+    // Visual canvas edges connect pipeline_nodes and are managed via server-side API routes.
+    // Direct client SDK access is denied; Admin SDK bypasses rules.
+    match /pipeline_edges/{edgeId} {
+      allow read, write: if false;
+    }
+
+    // Additional UNION/JOIN sources for multi-source pipelines.
+    // Direct client SDK access is denied; Admin SDK bypasses rules.
+    match /pipeline_sources/{sourceDocId} {
+      allow read, write: if false;
+    }
+
+    // Additional filtered push-back destinations for multi-target pipelines.
+    // Direct client SDK access is denied; Admin SDK bypasses rules.
+    match /pipeline_destinations/{destinationId} {
+      allow read, write: if false;
+    }
+
+    // Additional filter conditions linked to pipeline_destinations.
+    // Direct client SDK access is denied; Admin SDK bypasses rules.
+    match /pipeline_destination_conditions/{conditionId} {
+      allow read, write: if false;
+    }
+
+    // Column-level schema mappings generated and persisted server-side.
+    // Direct client SDK access is denied; Admin SDK bypasses rules.
+    match /schema_mappings/{mappingId} {
+      allow read, write: if false;
+    }
+
+    // Execution history records for pipeline sync runs.
+    // Direct client SDK access is denied; Admin SDK bypasses rules.
+    match /sync_runs/{runId} {
+      allow read, write: if false;
+    }
+
+    // Usage metering records (records, bytes, compute_ms, cost_usd) tied to billing.
+    // Direct client SDK access is denied to prevent usage tampering; Admin SDK bypasses rules.
+    match /metering_events/{eventId} {
+      allow read, write: if false;
+    }
+
+    // Immutable security and operational audit trail written by server-side actions.
+    // Direct client SDK access is denied to prevent log forgery or deletion; Admin SDK bypasses rules.
+    match /audit_logs/{logId} {
+      allow read, write: if false;
+    }
+
+    // Stripe billing references (customer, subscription, item, and payment method IDs).
+    // Direct client SDK access is denied to protect Stripe identifiers and billing integrity;
+    // Admin SDK bypasses rules for server-side requireAdmin() billing routes.
+    match /billing_accounts/{billingAccountId} {
+      allow read, write: if false;
+    }
+
+    // Default deny catch-all for every other collection, document, or nested subcollection path.
+    // Ensures zero client SDK read/write surface even if new server-only collections are added.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

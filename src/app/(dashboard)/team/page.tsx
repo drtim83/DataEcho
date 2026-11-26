@@ -65,7 +65,7 @@ export default function TeamPage() {
         )}
 
         <div className="p-4 rounded-xl text-xs" style={{ background: 'rgba(245, 158, 11, 0.06)', border: '1px solid rgba(245, 158, 11, 0.15)', color: 'var(--color-accent-amber)' }}>
-          New accounts are created in the Supabase dashboard (Authentication → Users → Add user), not here — this page only assigns roles to accounts that already exist.
+          New accounts are created in the Firebase Console (Authentication → Users → Add user), not here — user profiles are auto-created on first sign-in and this page assigns roles to existing accounts.
         </div>
 
         {error && (

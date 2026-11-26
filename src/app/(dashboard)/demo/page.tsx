@@ -120,14 +120,14 @@ export default function DemoPage() {
   const [selectedTable, setSelectedTable] = useState<keyof typeof DEMO_SAMPLE_DATA>('employees');
   const [selectedConnector, setSelectedConnector] = useState<(typeof DEMO_CONNECTORS)[number] | null>(null);
 
-  // State for live Supabase connection test
+  // State for live Cloud Firestore connection test
   const [liveTestStatus, setLiveTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [liveTestMessage, setLiveTestMessage] = useState('');
 
-  async function testLiveSupabase() {
+  async function testLiveFirebase() {
     setLiveTestStatus('testing');
     try {
-      const res = await fetch('/api/demo/test-supabase');
+      const res = await fetch('/api/demo/test-firebase');
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Connection failed');
       setLiveTestStatus('success');
@@ -155,7 +155,7 @@ export default function DemoPage() {
         {/* Banner */}
         <div className="p-4 rounded-xl text-xs flex items-start gap-2" style={{ background: 'rgba(139, 92, 246, 0.08)', border: '1px solid rgba(139, 92, 246, 0.2)', color: 'var(--color-accent-purple)' }}>
           <span className="text-sm mt-0.5">🎭</span>
-          <span>Everything on this page is simulated data — safe to use in a walkthrough or sales demo. The one exception is the &ldquo;Test Live Connection&rdquo; button below, which does run a real read-only query against your DataEcho Supabase database to prove the connection is live.</span>
+          <span>Everything on this page is simulated data — safe to use in a walkthrough or sales demo. The one exception is the &ldquo;Test Live Connection&rdquo; button below, which does run a real read-only query against your DataEcho Cloud Firestore database to prove the connection is live.</span>
         </div>
 
         {/* KPI Cards */}
@@ -250,7 +250,7 @@ export default function DemoPage() {
                   </span>
                   {c.id === 'd4' && (
                     <button
-                      onClick={(e) => { e.stopPropagation(); testLiveSupabase(); }}
+                      onClick={(e) => { e.stopPropagation(); testLiveFirebase(); }}
                       disabled={liveTestStatus === 'testing'}
                       className="text-[10px] cursor-pointer transition-opacity hover:opacity-80"
                       style={{ color: 'var(--color-accent-blue)' }}
@@ -265,7 +265,7 @@ export default function DemoPage() {
                     borderColor: liveTestStatus === 'success' ? 'rgba(20, 184, 166, 0.2)' : liveTestStatus === 'error' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.2)',
                     color: liveTestStatus === 'success' ? 'var(--color-accent-teal)' : liveTestStatus === 'error' ? 'var(--color-accent-coral)' : 'var(--color-accent-blue)'
                   }}>
-                    {liveTestStatus === 'testing' ? 'Connecting to DataEcho Supabase...' : liveTestMessage}
+                    {liveTestStatus === 'testing' ? 'Connecting to DataEcho Cloud Firestore...' : liveTestMessage}
                   </div>
                 )}
               </div>

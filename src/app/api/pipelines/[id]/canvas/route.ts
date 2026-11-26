@@ -1,19 +1,32 @@
 import { NextResponse } from 'next/server';
-import { requireUser, errorMessage } from '@/lib/supabase/server';
+import { requireUser, errorMessage } from '@/lib/firebase/server';
+import { commitDeletes } from '@/lib/firebase/db-helpers';
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { supabase, user } = await requireUser();
+    const { db, user } = await requireUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { id } = await params;
-    const [{ data: nodes, error: nodesError }, { data: edges, error: edgesError }] = await Promise.all([
-      supabase.from('pipeline_nodes').select('*').eq('pipeline_id', id),
-      supabase.from('pipeline_edges').select('*').eq('pipeline_id', id),
+    const [nodesSnap, edgesSnap] = await Promise.all([
+      db.collection('pipeline_nodes').where('pipeline_id', '==', id).get(),
+      db.collection('pipeline_edges').where('pipeline_id', '==', id).get(),
     ]);
 
-    if (nodesError) throw nodesError;
-    if (edgesError) throw edgesError;
+    const nodes = nodesSnap.docs.map((d) => {
+      const data = d.data();
+      return {
+        ...data,
+        id: typeof data.id === 'string' && data.id ? data.id : d.id,
+      };
+    });
+    const edges = edgesSnap.docs.map((d) => {
+      const data = d.data();
+      return {
+        ...data,
+        id: typeof data.id === 'string' && data.id ? data.id : d.id,
+      };
+    });
 
     return NextResponse.json({ nodes, edges });
   } catch (error) {
@@ -24,38 +37,66 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
 export async function PUT(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { supabase, user } = await requireUser();
+    const { db, user } = await requireUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { id } = await params;
-    const body = await req.json();
-    const { nodes, edges } = body as {
-      nodes: { id: string; type: string; label: string; connector_type?: string; position_x: number; position_y: number; config?: Record<string, unknown> }[];
-      edges: { id: string; source_node: string; target_node: string; animated?: boolean }[];
+    const body = (await req.json()) as {
+      nodes?: { id: string; type: string; label: string; connector_type?: string; position_x: number; position_y: number; config?: Record<string, unknown> }[];
+      edges?: { id: string; source_node: string; target_node: string; animated?: boolean }[];
     };
+    const nodes = Array.isArray(body?.nodes) ? body.nodes : [];
+    const edges = Array.isArray(body?.edges) ? body.edges : [];
 
     // Replace-all is simplest and matches how the canvas UI saves (full snapshot each time).
-    const { error: delNodesError } = await supabase.from('pipeline_nodes').delete().eq('pipeline_id', id);
-    if (delNodesError) throw delNodesError;
-    const { error: delEdgesError } = await supabase.from('pipeline_edges').delete().eq('pipeline_id', id);
-    if (delEdgesError) throw delEdgesError;
+    const [oldNodesSnap, oldEdgesSnap] = await Promise.all([
+      db.collection('pipeline_nodes').where('pipeline_id', '==', id).get(),
+      db.collection('pipeline_edges').where('pipeline_id', '==', id).get(),
+    ]);
+    await commitDeletes(db, [
+      ...oldNodesSnap.docs.map((d) => d.ref),
+      ...oldEdgesSnap.docs.map((d) => d.ref),
+    ]);
 
     if (nodes.length > 0) {
-      const { error } = await supabase.from('pipeline_nodes').insert(
-        nodes.map((n) => ({
-          id: n.id, pipeline_id: id, type: n.type, label: n.label,
-          connector_type: n.connector_type, position_x: n.position_x, position_y: n.position_y,
-          config: n.config || {},
-        }))
-      );
-      if (error) throw error;
+      for (let i = 0; i < nodes.length; i += 450) {
+        const batch = db.batch();
+        for (const n of nodes.slice(i, i + 450)) {
+          const ref = db
+            .collection('pipeline_nodes')
+            .doc(`p_${encodeURIComponent(id)}_${encodeURIComponent(n.id)}`);
+          batch.set(ref, {
+            id: n.id,
+            pipeline_id: id,
+            type: n.type,
+            label: n.label,
+            connector_type: n.connector_type ?? null,
+            position_x: n.position_x,
+            position_y: n.position_y,
+            config: n.config || {},
+          });
+        }
+        await batch.commit();
+      }
     }
 
     if (edges.length > 0) {
-      const { error } = await supabase.from('pipeline_edges').insert(
-        edges.map((e) => ({ id: e.id, pipeline_id: id, source_node: e.source_node, target_node: e.target_node, animated: e.animated ?? true }))
-      );
-      if (error) throw error;
+      for (let i = 0; i < edges.length; i += 450) {
+        const batch = db.batch();
+        for (const e of edges.slice(i, i + 450)) {
+          const ref = db
+            .collection('pipeline_edges')
+            .doc(`p_${encodeURIComponent(id)}_${encodeURIComponent(e.id)}`);
+          batch.set(ref, {
+            id: e.id,
+            pipeline_id: id,
+            source_node: e.source_node,
+            target_node: e.target_node,
+            animated: e.animated ?? true,
+          });
+        }
+        await batch.commit();
+      }
     }
 
     return NextResponse.json({ success: true });

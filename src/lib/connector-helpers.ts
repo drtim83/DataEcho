@@ -1,28 +1,39 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Firestore } from 'firebase-admin/firestore';
 import { decrypt } from './crypto';
 import type { DbTestInput } from './db-test';
 import type { ConnectorType } from '@/types';
 
-export async function getConnectorConnectionInput(supabase: SupabaseClient, connectorId: string): Promise<DbTestInput & { name: string }> {
-  const { data: row, error } = await supabase
-    .from('connectors')
-    .select('name, type, config')
-    .eq('id', connectorId)
-    .single();
+export async function getConnectorConnectionInput(
+  db: Firestore,
+  connectorId: string
+): Promise<DbTestInput & { name: string }> {
+  const snap = await db.collection('connectors').doc(connectorId).get();
 
-  if (error || !row) {
+  if (!snap.exists) {
     throw new Error(`Connector ${connectorId} not found`);
   }
 
-  const config = row.config as { host?: string; port?: number; database?: string; username?: string; password?: string };
+  const row = snap.data() as {
+    name: string;
+    type: ConnectorType;
+    config?: {
+      host?: string;
+      port?: number;
+      database?: string;
+      username?: string;
+      password?: string;
+    };
+  };
+
+  const config = row.config || {};
 
   return {
     name: row.name,
-    type: row.type as ConnectorType,
-    host: config?.host || '',
-    port: config?.port,
-    database: config?.database || '',
-    username: config?.username,
-    password: config?.password ? decrypt(config.password) : undefined,
+    type: row.type,
+    host: config.host || '',
+    port: config.port,
+    database: config.database || '',
+    username: config.username,
+    password: config.password ? decrypt(config.password) : undefined,
   };
 }

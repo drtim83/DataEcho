@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
-import { requireAdmin, errorMessage } from '@/lib/supabase/server';
+import { requireAdmin, errorMessage } from '@/lib/firebase/server';
 import { logAudit } from '@/lib/audit';
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { supabase, user, admin } = await requireAdmin();
+    const { db, user, admin } = await requireAdmin();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (!admin) return NextResponse.json({ error: 'Only admins can change roles' }, { status: 403 });
 
@@ -18,10 +18,22 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
       return NextResponse.json({ error: "You can't remove your own admin access" }, { status: 400 });
     }
 
-    const { data, error } = await supabase.from('profiles').update({ role }).eq('id', id).select('id, email, role').single();
-    if (error) throw error;
+    const ref = db.collection('profiles').doc(id);
+    const snap = await ref.get();
+    if (!snap.exists) {
+      return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
+    }
 
-    await logAudit(supabase, {
+    await ref.update({ role });
+    const existing = snap.data()!;
+    const data = {
+      id: snap.id,
+      email: existing.email as string,
+      role: role as 'admin' | 'user',
+      created_at: existing.created_at as string,
+    };
+
+    await logAudit(db, {
       action: 'profile.role_change',
       actor: user.email ?? user.id,
       status: 'success',

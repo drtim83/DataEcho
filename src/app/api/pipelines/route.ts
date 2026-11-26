@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireUser, errorMessage } from '@/lib/supabase/server';
+import { requireUser, errorMessage } from '@/lib/firebase/server';
 import { logAudit } from '@/lib/audit';
 import type { Connector, Pipeline, PipelineDirection, SyncMode } from '@/types';
 
@@ -46,23 +46,29 @@ function toConnectorSummary(row?: ConnectorRow): Connector | undefined {
 
 export async function GET() {
   try {
-    const { supabase, user } = await requireUser();
+    const { db, user } = await requireUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const [{ data: pipelines, error: pipelinesError }, { data: connectors, error: connectorsError }, { data: runs, error: runsError }] = await Promise.all([
-      supabase.from('pipelines').select('*').order('created_at', { ascending: false }),
-      supabase.from('connectors').select('id, name, type, category, role, config, status'),
-      supabase.from('sync_runs').select('pipeline_id, records, started_at').order('started_at', { ascending: false }),
+    const [pipelinesSnap, connectorsSnap, runsSnap] = await Promise.all([
+      db.collection('pipelines').orderBy('created_at', 'desc').get(),
+      db.collection('connectors').get(),
+      db.collection('sync_runs').orderBy('started_at', 'desc').get(),
     ]);
 
-    if (pipelinesError) throw pipelinesError;
-    if (connectorsError) throw connectorsError;
-    if (runsError) throw runsError;
+    const pipelines: PipelineRow[] = pipelinesSnap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<PipelineRow, 'id'>),
+    }));
+    const connectors: ConnectorRow[] = connectorsSnap.docs.map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<ConnectorRow, 'id'>),
+    }));
+    const runs = runsSnap.docs.map((d) => d.data() as { pipeline_id: string; records?: number; started_at: string });
 
-    const connectorById = new Map((connectors as ConnectorRow[]).map((c) => [c.id, c]));
+    const connectorById = new Map(connectors.map((c) => [c.id, c]));
 
-    const result: (Pipeline & { source_table?: string; target_table?: string })[] = (pipelines as PipelineRow[]).map((p) => {
-      const pipelineRuns = (runs || []).filter((r) => r.pipeline_id === p.id);
+    const result: (Pipeline & { source_table?: string; target_table?: string })[] = pipelines.map((p) => {
+      const pipelineRuns = runs.filter((r) => r.pipeline_id === p.id);
       const records_synced = pipelineRuns.reduce((sum, r) => sum + (r.records || 0), 0);
       const last_sync = pipelineRuns[0]?.started_at;
 
@@ -93,7 +99,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const { supabase, user } = await requireUser();
+    const { db, user } = await requireUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const body = await req.json();
@@ -106,24 +112,22 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'sync_mode must be "append" or "truncate_reload"' }, { status: 400 });
     }
 
-    const { data, error } = await supabase
-      .from('pipelines')
-      .insert({
-        name,
-        source_id: source_connector_id,
-        target_id: target_connector_id,
-        source_table,
-        target_table,
-        direction: direction || 'cloud_bound',
-        sync_mode: sync_mode || 'append',
-        status: 'draft',
-      })
-      .select('*')
-      .single();
+    const docData = {
+      name,
+      source_id: source_connector_id,
+      target_id: target_connector_id,
+      source_table,
+      target_table,
+      direction: direction || 'cloud_bound',
+      sync_mode: sync_mode || 'append',
+      status: 'draft',
+      created_at: new Date().toISOString(),
+    };
 
-    if (error) throw error;
+    const ref = await db.collection('pipelines').add(docData);
+    const data = { id: ref.id, ...docData };
 
-    await logAudit(supabase, {
+    await logAudit(db, {
       action: 'pipeline.create',
       actor: user.email ?? user.id,
       status: 'success',

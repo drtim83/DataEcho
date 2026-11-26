@@ -65,8 +65,8 @@ export default function GuidePage() {
                   <p>
                     <strong>DataEcho</strong> is a bidirectional data movement platform: connect two databases,
                     map their columns, and copy rows between them on demand. It&apos;s a real Next.js app backed
-                    by Supabase (Postgres, Auth, Row Level Security) — every number on every page comes from a
-                    real table, and every sync actually connects to a real database and moves real rows.
+                    by Google Firebase (Firebase Auth &amp; Cloud Firestore) — every number on every page comes from a
+                    real collection, and every sync actually connects to a real database and moves real rows.
                   </p>
                   <p>
                     The typical flow: add two <strong>Connectors</strong> (Connector Hub) → build a{' '}
@@ -110,9 +110,9 @@ export default function GuidePage() {
                   <p><strong>What&apos;s real about the security model:</strong></p>
                   <ul className="list-disc list-inside space-y-2 ml-2">
                     <li>Connector passwords are encrypted at rest with AES-256-GCM before being stored, and only decrypted server-side at the moment a connection is made.</li>
-                    <li>Every table has Row Level Security enabled — reads/writes are only possible for authenticated users, enforced by Postgres itself, not just application code.</li>
-                    <li>Connector, billing, and role-management mutations require the <code>admin</code> role, enforced both in the API route (<code>requireAdmin()</code>) and again at the database layer via an <code>is_admin()</code> RLS policy — a bug in one layer doesn&apos;t remove the other.</li>
-                    <li>Auth is real Supabase email/password auth with session cookies — no mock login.</li>
+                    <li>Cloud Firestore Security Rules deny all direct client reads/writes — all database access runs strictly server-side via the Firebase Admin SDK behind verified HTTP-only session cookies.</li>
+                    <li>Connector, billing, and role-management mutations require the <code>admin</code> role, enforced server-side in every API route (<code>requireAdmin()</code>) using the user&apos;s Firestore <code>profiles</code> document.</li>
+                    <li>Auth is real Firebase email/password auth with server-verified HTTP-only session cookies — no mock login.</li>
                   </ul>
                 </div>
               </div>
@@ -241,9 +241,8 @@ export default function GuidePage() {
                     <li><strong>user</strong> — can view connectors, build and run pipelines, and map schemas, but cannot manage connectors or billing (those hold credentials and payment info).</li>
                   </ul>
                   <p>
-                    New accounts are created in the Supabase dashboard (Authentication → Users → Add user), not
-                    in the app — every new account defaults to <code>user</code> automatically via a database
-                    trigger. An existing admin promotes accounts to admin on the <strong>Team</strong> page.
+                    New accounts are created in the Firebase Console (Authentication → Users → Add user), not
+                    in the app — every new account automatically receives a Firestore profile defaulting to <code>user</code> on first sign-in (with the bootstrap admin or first account promoted to <code>admin</code>). An existing admin promotes accounts to admin on the <strong>Team</strong> page.
                     Admins can&apos;t demote themselves, to avoid ever locking everyone out.
                   </p>
                 </div>
@@ -326,8 +325,8 @@ export default function GuidePage() {
                   </p>
                   <p>
                     The one deliberate exception is the <strong>&ldquo;Test Live Connection&rdquo;</strong>{' '}
-                    button on the Supabase card, which runs one real, read-only query against DataEcho&apos;s
-                    own Supabase database to prove the app is genuinely connected — clearly separate from the
+                    button on the cloud card, which runs one real, read-only query against DataEcho&apos;s
+                    own Cloud Firestore database to prove the app is genuinely connected — clearly separate from the
                     simulated data around it.
                   </p>
                 </div>

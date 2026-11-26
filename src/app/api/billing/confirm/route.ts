@@ -1,12 +1,12 @@
 import { NextResponse } from 'next/server';
-import { requireAdmin, errorMessage } from '@/lib/supabase/server';
+import { requireAdmin, errorMessage } from '@/lib/firebase/server';
 import { getStripe } from '@/lib/stripe';
 import { logAudit } from '@/lib/audit';
 import type Stripe from 'stripe';
 
 export async function POST(req: Request) {
   try {
-    const { supabase, user, admin } = await requireAdmin();
+    const { db, user, admin } = await requireAdmin();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     if (!admin) return NextResponse.json({ error: 'Only admins can manage billing' }, { status: 403 });
 
@@ -32,18 +32,21 @@ export async function POST(req: Request) {
 
     await stripe.customers.update(customerId, { invoice_settings: { default_payment_method: paymentMethodId } });
 
-    const { data: existing } = await supabase
-      .from('billing_accounts')
-      .select('id, stripe_subscription_id')
-      .eq('stripe_customer_id', customerId)
-      .maybeSingle();
+    const existingSnap = await db
+      .collection('billing_accounts')
+      .where('stripe_customer_id', '==', customerId)
+      .limit(1)
+      .get();
+    const existingDoc = existingSnap.empty ? null : existingSnap.docs[0];
+    const existingData = existingDoc?.data() as { stripe_subscription_id?: string | null } | undefined;
 
-    let subscriptionId = existing?.stripe_subscription_id ?? null;
+    let subscriptionId = existingData?.stripe_subscription_id ?? null;
     let connectorItemId: string | null = null;
     let usageItemId: string | null = null;
 
     if (!subscriptionId) {
-      const { count } = await supabase.from('connectors').select('id', { count: 'exact', head: true });
+      const countSnap = await db.collection('connectors').count().get();
+      const count = countSnap.data().count;
 
       const subscription = await stripe.subscriptions.create({
         customer: customerId,
@@ -60,24 +63,30 @@ export async function POST(req: Request) {
       usageItemId = subscription.items.data.find((i) => i.price.id === process.env.STRIPE_PRICE_GB_OVERAGE)?.id ?? null;
     }
 
-    const row = {
+    const row: Record<string, unknown> = {
       stripe_customer_id: customerId,
       default_payment_method_id: paymentMethodId,
-      card_brand: card?.brand,
-      card_last4: card?.last4,
-      card_exp_month: card?.exp_month,
-      card_exp_year: card?.exp_year,
+      card_brand: card?.brand ?? null,
+      card_last4: card?.last4 ?? null,
+      card_exp_month: card?.exp_month ?? null,
+      card_exp_year: card?.exp_year ?? null,
       updated_at: new Date().toISOString(),
-      ...(subscriptionId && !existing?.stripe_subscription_id ? { stripe_subscription_id: subscriptionId, connector_item_id: connectorItemId, usage_item_id: usageItemId } : {}),
+      ...(subscriptionId && !existingData?.stripe_subscription_id
+        ? {
+            stripe_subscription_id: subscriptionId,
+            connector_item_id: connectorItemId,
+            usage_item_id: usageItemId,
+          }
+        : {}),
     };
 
-    const { error } = existing
-      ? await supabase.from('billing_accounts').update(row).eq('id', existing.id)
-      : await supabase.from('billing_accounts').insert(row);
+    if (existingDoc) {
+      await existingDoc.ref.update(row);
+    } else {
+      await db.collection('billing_accounts').add(row);
+    }
 
-    if (error) throw error;
-
-    await logAudit(supabase, {
+    await logAudit(db, {
       action: 'billing.payment_method_added',
       actor: user.email ?? user.id,
       status: 'success',

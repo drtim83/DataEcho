@@ -1,17 +1,17 @@
 import { NextResponse } from 'next/server';
-import { requireUser, errorMessage } from '@/lib/supabase/server';
+import { requireUser, errorMessage } from '@/lib/firebase/server';
 import { getConnectorConnectionInput } from '@/lib/connector-helpers';
 import { listTables } from '@/lib/db-schema';
 
 export async function GET(req: Request) {
   try {
-    const { supabase, user } = await requireUser();
+    const { db, user } = await requireUser();
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
     const connectorId = new URL(req.url).searchParams.get('connector_id');
     if (!connectorId) return NextResponse.json({ error: 'connector_id is required' }, { status: 400 });
 
-    const conn = await getConnectorConnectionInput(supabase, connectorId);
+    const conn = await getConnectorConnectionInput(db, connectorId);
     const tables = await listTables(conn);
 
     return NextResponse.json({ tables });

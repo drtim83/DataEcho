@@ -36,7 +36,7 @@
 
 ### 5. 🛡️ Enterprise Security & AES-256 Encryption
 - **Encrypted Credential Vault:** All database passwords, connection strings, service account keys, and cloud tokens are encrypted at rest using **AES-256-GCM** before database storage.
-- **Row-Level Security (RLS):** End-to-end Supabase RLS policies ensuring strict multi-tenant isolation across organizations, connectors, and audit trails.
+- **Firestore Security Rules & Server-Side RBAC:** Server-only `firebase-admin` access protected by Firebase Auth HTTP-only session cookies, strict deny-all client Firestore rules, and role-based enforcement across connectors, billing, and audit trails.
 
 ### 6. 👥 Team Collaboration & Role-Based Access Control (RBAC)
 - **Granular Permissions:** Preconfigured roles (**Admin**, **Data Engineer**, and **Viewer**) with dedicated team management views (`/team`).
@@ -83,8 +83,8 @@ graph TD
     end
 
     subgraph PlatformState ["Platform Storage & Security"]
-        SUPABASE_AUTH["Supabase Authentication & SSR"]
-        SUPABASE_DB["Supabase PostgreSQL (RLS Enforced)"]
+        FIREBASE_AUTH["Firebase Auth & HTTP-Only Session Cookies"]
+        FIRESTORE_DB["Cloud Firestore (Deny-All Client Rules, Admin SDK)"]
         STRIPE_API["Stripe Billing & Invoicing Engine"]
     end
 
@@ -115,8 +115,8 @@ graph TD
 3. **`agent/` (Dedicated MCP Agent Server)**
    - Standalone Node.js service exposing DataEcho tools (database queries, sync triggering, pipeline inspection) to external AI agents (e.g. Claude Desktop, Cursor, Antigravity).
 
-4. **`supabase/migrations/` (Database Schema & Security)**
-   - SQL migrations defining pipelines, connectors, audit logs, team roles, and strict Row-Level Security (RLS) policies.
+4. **`firestore.rules` & `src/lib/firebase/` (Security Rules & Backend Auth)**
+   - Deny-all client Firestore security rules plus Firebase Admin SDK session cookie verification and server-side RBAC for pipelines, connectors, audit logs, and billing.
 
 ---
 
@@ -131,7 +131,7 @@ graph TD
 | **Relational Drivers** | `pg`, `mysql2`, `mssql`, `oracledb` | Native drivers for PostgreSQL, MySQL, SQL Server, and Oracle |
 | **Cloud Object Storage** | AWS S3, Azure Blob, Google Cloud Storage | Native enterprise cloud SDKs for data lake extraction & loading |
 | **AI Integration** | `@modelcontextprotocol/sdk` ^1.29.0 | Model Context Protocol server exposing data operations to AI |
-| **Database & Auth** | Supabase (`@supabase/ssr`, `@supabase/supabase-js`) | Multi-tenant auth, session middleware, and RLS-protected storage |
+| **Database & Auth** | Google Firebase (`firebase`, `firebase-admin`) | Firebase Auth, HTTP-only session cookies, and server-side Cloud Firestore |
 | **Payments & Billing** | Stripe (`stripe`, `@stripe/stripe-js`) | Subscription lifecycle and metered data volume billing |
 | **Encryption** | Node.js `crypto` (AES-256-GCM) | Hardware-accelerated credential encryption at rest |
 
@@ -142,7 +142,7 @@ graph TD
 ### Prerequisites
 - **Node.js**: v20.x or higher
 - **Package Manager**: npm
-- **Supabase Account / Local CLI**: For database & authentication
+- **Firebase Project**: With Email/Password Auth and Cloud Firestore enabled
 - **Stripe Account (Optional)**: For billing integration
 
 ### 1. Clone & Install
@@ -153,20 +153,20 @@ npm install
 ```
 
 ### 2. Environment Configuration
-Copy `.env.local.example` to `.env.local` and provide your credentials:
+Copy `.env.example` to `.env.local` and provide your credentials:
 ```bash
-cp .env.local.example .env.local
+cp .env.example .env.local
 ```
 Fill in the required variables:
-- `NEXT_PUBLIC_SUPABASE_URL` & `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `ENCRYPTION_KEY` (32-byte hex string for AES-256 credential encryption)
+- `NEXT_PUBLIC_FIREBASE_API_KEY`, `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN`, `NEXT_PUBLIC_FIREBASE_PROJECT_ID`, `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET`, `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`, `NEXT_PUBLIC_FIREBASE_APP_ID`
+- `FIREBASE_SERVICE_ACCOUNT_KEY` (single-line JSON or base64 service account key; or `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY`)
+- `ENCRYPTION_KEY` (base64-encoded 32-byte key for AES-256-GCM credential encryption)
 - `STRIPE_SECRET_KEY` & `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` (if billing enabled)
 
-### 3. Apply Supabase Database Migrations
-Run the SQL migration files located in `supabase/migrations/` in sequential order via the Supabase Dashboard SQL Editor or Supabase CLI:
+### 3. Deploy Firestore Security Rules
+Deploy the server-only security rules (`firestore.rules`) and index config (`firestore.indexes.json`):
 ```bash
-supabase db push
+npx firebase-tools deploy --only firestore
 ```
 
 ### 4. Run the Development Server
